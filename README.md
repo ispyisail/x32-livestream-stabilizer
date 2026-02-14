@@ -23,7 +23,7 @@ Uses a feedforward control loop with configurable slew rate and meter smoothing 
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/x32-livestream-stabilizer.git
+git clone https://github.com/ispyisail/x32-livestream-stabilizer.git
 cd x32-livestream-stabilizer
 pip install -r requirements.txt
 ```
@@ -99,7 +99,7 @@ sudo apt install -y python3 python3-pip python3-venv git
 
 ```bash
 cd /home/pi
-git clone https://github.com/yourusername/x32-livestream-stabilizer.git x32
+git clone https://github.com/ispyisail/x32-livestream-stabilizer.git x32
 cd x32
 python3 -m venv venv
 source venv/bin/activate
