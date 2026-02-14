@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(pip show:*)",
+      "Bash(python:*)",
+      "Bash(curl:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:tostibroeders.nl)",
+      "WebFetch(domain:behringerwiki.musictribe.com)",
+      "WebFetch(domain:behringer.world)",
+      "WebFetch(domain:wiki.munichmakerlab.de)",
+      "WebFetch(domain:deepwiki.com)",
+      "WebFetch(domain:docplayer.net)",
+      "WebFetch(domain:x32ram.com)",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}

@@ -1,0 +1,283 @@
+{
+    "main_st": {
+        "fader": -19.0,
+        "mute": true,
+        "name": "Main ST"
+    },
+    "channels": {
+        "ch1": {
+            "fader": -4.3,
+            "mute": false,
+            "name": "Headset 1"
+        },
+        "ch2": {
+            "fader": -0.9,
+            "mute": false,
+            "name": "Lapel 2"
+        },
+        "ch3": {
+            "fader": -0.5,
+            "mute": false,
+            "name": "Pulpit "
+        },
+        "ch4": {
+            "fader": -3.0,
+            "mute": false,
+            "name": "Wireless 4"
+        },
+        "ch5": {
+            "fader": -7.1,
+            "mute": false,
+            "name": "Wireless 5"
+        },
+        "ch6": {
+            "fader": -3.9,
+            "mute": false,
+            "name": "Wireless 6"
+        },
+        "ch7": {
+            "fader": -14.6,
+            "mute": false,
+            "name": "Wireless 7"
+        },
+        "ch8": {
+            "fader": -8.2,
+            "mute": false,
+            "name": "Yellow"
+        },
+        "ch9": {
+            "fader": -8.5,
+            "mute": false,
+            "name": "Green"
+        },
+        "ch10": {
+            "fader": -8.0,
+            "mute": false,
+            "name": "Red"
+        },
+        "ch11": {
+            "fader": -8.4,
+            "mute": false,
+            "name": "Blue"
+        },
+        "ch12": {
+            "fader": -5.9,
+            "mute": false,
+            "name": "Black"
+        },
+        "ch13": {
+            "fader": -8.7,
+            "mute": false,
+            "name": "White"
+        },
+        "ch14": {
+            "fader": -18.2,
+            "mute": false,
+            "name": "GrandPiano"
+        },
+        "ch15": {
+            "fader": -4.9,
+            "mute": false,
+            "name": "Keys left"
+        },
+        "ch16": {
+            "fader": -4.9,
+            "mute": false,
+            "name": "Keys right"
+        },
+        "ch17": {
+            "fader": -6.9,
+            "mute": false,
+            "name": "AcousticGtr"
+        },
+        "ch18": {
+            "fader": -17.8,
+            "mute": false,
+            "name": "Guitar"
+        },
+        "ch19": {
+            "fader": -8.9,
+            "mute": false,
+            "name": "Bass"
+        },
+        "ch20": {
+            "fader": -24.8,
+            "mute": false,
+            "name": "Choir L"
+        },
+        "ch21": {
+            "fader": -25.8,
+            "mute": false,
+            "name": "Choir R"
+        },
+        "ch22": {
+            "fader": -24.1,
+            "mute": true,
+            "name": ""
+        },
+        "ch23": {
+            "fader": -25.0,
+            "mute": true,
+            "name": ""
+        },
+        "ch24": {
+            "fader": -90.0,
+            "mute": true,
+            "name": ""
+        },
+        "ch25": {
+            "fader": -85.3,
+            "mute": true,
+            "name": ""
+        },
+        "ch26": {
+            "fader": -90.0,
+            "mute": true,
+            "name": ""
+        },
+        "ch27": {
+            "fader": -90.0,
+            "mute": true,
+            "name": ""
+        },
+        "ch28": {
+            "fader": -79.2,
+            "mute": true,
+            "name": ""
+        },
+        "ch29": {
+            "fader": -90.0,
+            "mute": true,
+            "name": ""
+        },
+        "ch30": {
+            "fader": -90.0,
+            "mute": true,
+            "name": ""
+        },
+        "ch31": {
+            "fader": -67.5,
+            "mute": true,
+            "name": ""
+        },
+        "ch32": {
+            "fader": -49.4,
+            "mute": true,
+            "name": ""
+        }
+    },
+    "mix_buses": {
+        "bus1": {
+            "fader": -3.1,
+            "mute": true,
+            "name": "PC"
+        },
+        "bus2": {
+            "fader": 0.9,
+            "mute": true,
+            "name": "AUX "
+        },
+        "bus3": {
+            "fader": -1.6,
+            "mute": true,
+            "name": "Speech"
+        },
+        "bus4": {
+            "fader": -1.5,
+            "mute": true,
+            "name": "H/Held"
+        },
+        "bus5": {
+            "fader": 2.0,
+            "mute": true,
+            "name": "Vocals"
+        },
+        "bus6": {
+            "fader": 0.7,
+            "mute": true,
+            "name": "Instrument"
+        },
+        "bus7": {
+            "fader": -90.0,
+            "mute": true,
+            "name": ""
+        },
+        "bus8": {
+            "fader": -1.1,
+            "mute": true,
+            "name": "Monitor"
+        },
+        "bus9": {
+            "fader": 5.1,
+            "mute": true,
+            "name": "IEM - 1"
+        },
+        "bus10": {
+            "fader": -2.2,
+            "mute": true,
+            "name": "IEM -2"
+        },
+        "bus11": {
+            "fader": -7.0,
+            "mute": true,
+            "name": "Video Mix"
+        },
+        "bus12": {
+            "fader": -7.7,
+            "mute": false,
+            "name": "MixBus"
+        },
+        "bus13": {
+            "fader": -0.2,
+            "mute": false,
+            "name": "Fx 1"
+        },
+        "bus14": {
+            "fader": 2.4,
+            "mute": false,
+            "name": "Fx 2"
+        },
+        "bus15": {
+            "fader": -89.1,
+            "mute": false,
+            "name": "Fx 3"
+        },
+        "bus16": {
+            "fader": -90.0,
+            "mute": false,
+            "name": "Fx 4"
+        }
+    },
+    "matrices": {
+        "mtx1": {
+            "fader": -19.5,
+            "mute": true,
+            "name": "Video M1"
+        },
+        "mtx2": {
+            "fader": -27.7,
+            "mute": true,
+            "name": "FOYER M2"
+        },
+        "mtx3": {
+            "fader": -8.4,
+            "mute": true,
+            "name": "Video M3"
+        },
+        "mtx4": {
+            "fader": -90.0,
+            "mute": true,
+            "name": ""
+        },
+        "mtx5": {
+            "fader": -89.1,
+            "mute": true,
+            "name": ""
+        },
+        "mtx6": {
+            "fader": -81.1,
+            "mute": true,
+            "name": ""
+        }
+    }
+}

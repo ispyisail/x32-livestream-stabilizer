@@ -1,0 +1,283 @@
+{
+    "main_st": {
+        "fader": null,
+        "mute": null,
+        "name": "Main ST"
+    },
+    "channels": {
+        "ch1": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch2": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch3": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch4": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch5": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch6": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch7": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch8": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch9": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch10": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch11": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch12": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch13": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch14": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch15": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch16": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch17": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch18": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch19": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch20": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch21": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch22": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch23": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch24": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch25": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch26": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch27": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch28": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch29": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch30": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch31": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "ch32": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        }
+    },
+    "mix_buses": {
+        "bus1": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "bus2": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "bus3": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "bus4": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "bus5": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "bus6": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "bus7": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "bus8": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "bus9": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "bus10": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "bus11": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "bus12": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "bus13": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "bus14": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "bus15": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "bus16": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        }
+    },
+    "matrices": {
+        "mtx1": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "mtx2": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "mtx3": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "mtx4": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "mtx5": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        },
+        "mtx6": {
+            "fader": null,
+            "mute": null,
+            "name": null
+        }
+    }
+}

@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>X32 Livestream Stabilizer</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
+        .container { max-width: 900px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1, h2 { color: #0056b3; }
+        .grid-container { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+        .status-box, .control-box { background-color: #e9ecef; padding: 15px; border-radius: 5px; }
+        .status-item { margin-bottom: 5px; display: flex; justify-content: space-between; }
+        .controls button { width: 100%; padding: 10px 15px; border: none; border-radius: 5px; cursor: pointer; font-size: 1em; margin-bottom: 10px; }
+        .controls button.start { background-color: #28a745; color: white; }
+        .controls button.stop { background-color: #dc3545; color: white; }
+        .input-group { margin-bottom: 15px; }
+        .input-group label { display: block; margin-bottom: 5px; font-weight: bold; }
+        .input-group input[type="number"], .input-group input[type="text"] { width: calc(100% - 22px); padding: 8px; border-radius: 4px; border: 1px solid #ddd; }
+        .input-group button { width: 100%; padding: 10px; background-color: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; margin-top: 5px; }
+        .message { margin-top: 15px; padding: 10px; border-radius: 5px; }
+        .message.success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .message.error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+
+        /* Level Meter Styling */
+        .meter-container {
+            width: 40px;
+            height: 150px;
+            background-color: #222;
+            border-radius: 3px;
+            overflow: hidden;
+            position: relative;
+            border: 1px solid #999;
+        }
+        .level-bar {
+            width: 100%;
+            background-color: green;
+            position: absolute;
+            bottom: 0;
+            transition: height 0.15s linear, background-color 0.15s linear;
+        }
+        .level-meter-display {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 10px;
+            gap: 4px;
+        }
+        .meter-column {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+        .meter-column .meter-label {
+            font-size: 0.75em;
+            font-weight: bold;
+            color: #555;
+            text-align: center;
+        }
+        .level-values {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding-left: 10px;
+            gap: 8px;
+        }
+        .level-value {
+            font-size: 1.1em;
+            font-weight: bold;
+            min-width: 100px;
+        }
+        .meter-labels {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            height: 150px;
+            font-size: 0.75em;
+            color: #666;
+            padding: 0 6px;
+        }
+        .meter-labels span {
+            text-align: right;
+            line-height: 1;
+        }
+        .meter-labels span:nth-child(1) { position: relative; top: -5px; }
+        .meter-labels span:nth-child(2) { position: relative; top: -5px; }
+        .meter-labels span:nth-child(3) { position: relative; top: 0px; }
+        .meter-labels span:nth-child(4) { position: relative; top: 5px; }
+        .meter-labels span:nth-child(5) { position: relative; top: 10px; }
+        .meter-labels span:nth-child(6) { position: relative; top: 15px; }
+
+        .suggestions-box {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #e9ecef;
+            border-radius: 5px;
+        }
+        .suggestions-box ul {
+            list-style: none;
+            padding: 0;
+        }
+        .suggestions-box li {
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .suggestions-box li button {
+            padding: 5px 10px;
+            font-size: 0.8em;
+            width: auto;
+            margin-left: 10px;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>X32 Livestream Stabilizer Control</h1>
+
+        <div class="grid-container">
+            <div class="status-box">
+                <h2>Current Status</h2>
+                <div class="status-item"><strong>Mixer IP:</strong> <span id="mixer_ip">N/A</span></div>
+                <div class="status-item"><strong>Bus Number:</strong> <span id="livestream_bus">N/A</span></div>
+                <div class="status-item"><strong>Connection:</strong> <span id="connected">N/A</span></div>
+                <div class="status-item"><strong>Overall Status:</strong> <span id="overall_status">N/A</span></div>
+                <hr>
+                <div class="level-meter-display">
+                    <div class="meter-column">
+                        <div class="meter-label">Signal</div>
+                        <div class="meter-container">
+                            <div id="level_bar" class="level-bar"></div>
+                        </div>
+                    </div>
+                    <div class="meter-column">
+                        <div class="meter-label">Fader</div>
+                        <div class="meter-container">
+                            <div id="fader_bar" class="level-bar" style="background-color: #2196F3;"></div>
+                        </div>
+                    </div>
+                    <div class="meter-labels">
+                        <span>+6</span>
+                        <span>0</span>
+                        <span>-6</span>
+                        <span>-12</span>
+                        <span>-24</span>
+                        <span>-48</span>
+                    </div>
+                    <div class="level-values">
+                        <div class="level-value">
+                            <strong>Signal:</strong> <span id="current_level_numeric">N/A</span>
+                        </div>
+                        <div class="level-value">
+                            <strong>Fader:</strong> <span id="current_fader">N/A</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="status-item"><strong>Target Level:</strong> <span id="target_level">N/A</span></div>
+            </div>
+
+            <div class="control-box">
+                <h2>Control Actions</h2>
+                <div class="controls">
+                    <button class="start" onclick="controlMonitor('/start_monitor')">Start Monitoring</button>
+                    <button class="stop" onclick="controlMonitor('/stop_monitor')">Stop Monitoring</button>
+                </div>
+
+                <hr>
+
+                <h2>Adjust PID Gains</h2>
+                <div class="input-group">
+                    <label for="new_kp">Kp (Proportional):</label>
+                    <input type="number" step="0.01" id="new_kp" value="0.5">
+                </div>
+                <div class="input-group">
+                    <label for="new_ki">Ki (Integral):</label>
+                    <input type="number" step="0.001" id="new_ki" value="0.05">
+                </div>
+                <div class="input-group">
+                    <label for="new_kd">Kd (Derivative):</label>
+                    <input type="number" step="0.001" id="new_kd" value="0.01">
+                </div>
+                <button onclick="setPidGains()">Set PID Gains</button>
+                <p><strong>Current:</strong> Kp:<span id="kp_val">N/A</span> Ki:<span id="ki_val">N/A</span> Kd:<span id="kd_val">N/A</span></p>
+
+                <hr>
+
+                <h2>Adjust Target Level</h2>
+                <div class="input-group">
+                    <label for="new_target_level">New Target Level (dB):</label>
+                    <input type="number" step="0.1" id="new_target_level" value="-6.0">
+                    <button onclick="setTargetLevel()">Set Target Level</button>
+                </div>
+                <p><em>Note: Changes to PID gains or Target Level take effect on next monitoring cycle. Consider restarting monitor for immediate effect.</em></p>
+
+                <hr>
+
+                <h2>Utilities</h2>
+                <div class="input-group">
+                    <button onclick="backupSettings()">Backup Mixer Settings</button>
+                    <p><em>Saves a snapshot of current mixer settings to a JSON file.</em></p>
+                </div>
+                <div class="input-group">
+                    <button onclick="analyzeRouting()">Analyze Livestream Routing</button>
+                    <p><em>Suggests potential livestream output buses/matrices.</em></p>
+                    <div id="routing_suggestions" class="suggestions-box" style="display:none;">
+                        <h3>Suggestions:</h3>
+                        <ul id="suggestions_list">
+                            <!-- Suggestions will be populated here by JavaScript -->
+                        </ul>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+        
+        <div id="message_area" class="message" style="display: none;"></div>
+    </div>
+
+    <script>
+        function showMessage(msg, type) {
+            const msgArea = document.getElementById('message_area');
+            msgArea.textContent = msg;
+            msgArea.className = `message ${type}`;
+            msgArea.style.display = 'block';
+            setTimeout(() => msgArea.style.display = 'none', 5000); // Hide after 5 seconds
+        }
+
+        const METER_HEIGHT = 150;
+        const METER_MAX_DB = 6;
+        const METER_MIN_DB = -60;
+
+        function dbToHeight(db) {
+            let n = (db - METER_MIN_DB) / (METER_MAX_DB - METER_MIN_DB);
+            return Math.max(0, Math.min(1, n)) * METER_HEIGHT;
+        }
+
+        function updateSignalMeter(level_db, target_level_db) {
+            const bar = document.getElementById('level_bar');
+            bar.style.height = dbToHeight(level_db) + 'px';
+            if (level_db >= 0) {
+                bar.style.backgroundColor = 'red';
+            } else if (level_db >= target_level_db + 2) {
+                bar.style.backgroundColor = 'orange';
+            } else {
+                bar.style.backgroundColor = '#4CAF50';
+            }
+        }
+
+        function updateFaderMeter(fader_db) {
+            const bar = document.getElementById('fader_bar');
+            bar.style.height = dbToHeight(fader_db) + 'px';
+        }
+
+        // Cached target for fast meter polling (updated by /status)
+        let cachedTargetDb = -6.0;
+
+
+        async function fetchStatus() {
+            try {
+                const response = await fetch('/status');
+                const data = await response.json();
+                document.getElementById('mixer_ip').textContent = data.mixer_ip;
+                document.getElementById('livestream_bus').textContent = data.livestream_bus;
+                document.getElementById('connected').textContent = data.connected ? 'Yes' : 'No';
+                document.getElementById('overall_status').textContent = data.status_message;
+                
+                const currentLevel = parseFloat(data.current_level_db);
+                const currentFader = parseFloat(data.current_fader_db);
+                const targetLevel = parseFloat(data.target_level_db);
+                cachedTargetDb = isNaN(targetLevel) ? -6.0 : targetLevel;
+
+                document.getElementById('current_level_numeric').textContent = isNaN(currentLevel) ? 'N/A' : `${currentLevel.toFixed(2)} dB`;
+                document.getElementById('current_fader').textContent = isNaN(currentFader) ? 'N/A' : `${currentFader.toFixed(2)} dB`;
+                document.getElementById('target_level').textContent = data.target_level_db;
+
+                document.getElementById('kp_val').textContent = data.kp;
+                document.getElementById('ki_val').textContent = data.ki;
+                document.getElementById('kd_val').textContent = data.kd;
+
+                if (!isNaN(currentLevel)) {
+                    updateSignalMeter(currentLevel, cachedTargetDb);
+                }
+                if (!isNaN(currentFader)) {
+                    updateFaderMeter(currentFader);
+                }
+
+                // Update routing suggestions if available and not already displayed
+                if (data.suggested_livestream_output && data.suggested_livestream_output.length > 0) {
+                    displayRoutingSuggestions(data.suggested_livestream_output);
+                }
+
+            } catch (error) {
+                console.error('Error fetching status:', error);
+                showMessage('Failed to fetch status: ' + error.message, 'error');
+            }
+        }
+
+        async function controlMonitor(endpoint) {
+            try {
+                const response = await fetch(endpoint, { method: 'POST' });
+                const data = await response.json();
+                if (response.ok) {
+                    showMessage(data.message, 'success');
+                } else {
+                    showMessage('Error: ' + (data.error || data.message), 'error');
+                }
+                fetchStatus(); // Update status after action
+            } catch (error) {
+                console.error('Error controlling monitor:', error);
+                showMessage('Failed to send command: ' + error.message, 'error');
+            }
+        }
+
+        async function setTargetLevel() {
+            const newTarget = document.getElementById('new_target_level').value;
+            try {
+                const response = await fetch('/set_target_level', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 'target_level_db': parseFloat(newTarget) })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    showMessage(data.message, 'success');
+                } else {
+                    showMessage('Error: ' + (data.error || data.message), 'error');
+                }
+                fetchStatus();
+            } catch (error) {
+                console.error('Error setting target level:', error);
+                showMessage('Failed to set target level: ' + error.message, 'error');
+            }
+        }
+
+        async function setPidGains() {
+            const newKp = document.getElementById('new_kp').value;
+            const newKi = document.getElementById('new_ki').value;
+            const newKd = document.getElementById('new_kd').value;
+            try {
+                const response = await fetch('/set_pid', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 'kp': parseFloat(newKp), 'ki': parseFloat(newKi), 'kd': parseFloat(newKd) })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    showMessage(data.message, 'success');
+                } else {
+                    showMessage('Error: ' + (data.error || data.message), 'error');
+                }
+                fetchStatus();
+            } catch (error) {
+                console.error('Error setting PID gains:', error);
+                showMessage('Failed to set PID gains: ' + error.message, 'error');
+            }
+        }
+
+        async function backupSettings() {
+            try {
+                const response = await fetch('/backup_settings', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    showMessage(data.message, 'success');
+                } else {
+                    showMessage('Error: ' + (data.error || data.message), 'error');
+                }
+                fetchStatus();
+            } catch (error) {
+                console.error('Error backing up settings:', error);
+                showMessage('Failed to backup settings: ' + error.message, 'error');
+            }
+        }
+
+        async function analyzeRouting() {
+            try {
+                const response = await fetch('/analyze_routing', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    showMessage(data.message, 'success');
+                    displayRoutingSuggestions(data.suggestions);
+                } else {
+                    showMessage('Error: ' + (data.error || data.message), 'error');
+                }
+            } catch (error) {
+                console.error('Error analyzing routing:', error);
+                showMessage('Failed to analyze routing: ' + error.message, 'error');
+            }
+        }
+
+        function displayRoutingSuggestions(suggestions) {
+            const suggestionsList = document.getElementById('suggestions_list');
+            suggestionsList.innerHTML = ''; // Clear previous suggestions
+            const suggestionsBox = document.getElementById('routing_suggestions');
+
+            if (suggestions.length === 0) {
+                suggestionsList.innerHTML = '<li>No clear livestream outputs found.</li>';
+                suggestionsBox.style.display = 'block';
+                return;
+            }
+
+            suggestions.forEach(suggestion => {
+                const li = document.createElement('li');
+                let suggestionText = `${suggestion.type} ${suggestion.id}`;
+                if (suggestion.name) {
+                    suggestionText += ` (${suggestion.name})`;
+                }
+                suggestionText += ` - Fader: ${suggestion.fader_db.toFixed(2)} dB`;
+
+                li.textContent = suggestionText;
+
+                const selectButton = document.createElement('button');
+                selectButton.textContent = 'Select';
+                selectButton.onclick = () => selectLivestreamBus(suggestion.id);
+                li.appendChild(selectButton);
+                suggestionsList.appendChild(li);
+            });
+            suggestionsBox.style.display = 'block';
+        }
+
+        async function selectLivestreamBus(bus_id) {
+            try {
+                const response = await fetch('/set_livestream_bus', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 'bus_id': bus_id })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    showMessage(data.message, 'success');
+                    fetchStatus(); // Update status with new bus
+                } else {
+                    showMessage('Error: ' + (data.error || data.message), 'error');
+                }
+            } catch (error) {
+                console.error('Error selecting livestream bus:', error);
+                showMessage('Failed to select livestream bus: ' + error.message, 'error');
+            }
+        }
+
+
+        // Fast meter polling (5 Hz) for smooth meter animation
+        async function fetchMeter() {
+            try {
+                const response = await fetch('/meter');
+                const data = await response.json();
+                const level = data.level_db;
+                const fader = data.fader_db;
+                document.getElementById('current_level_numeric').textContent = `${level.toFixed(2)} dB`;
+                document.getElementById('current_fader').textContent = `${fader.toFixed(2)} dB`;
+                updateSignalMeter(level, cachedTargetDb);
+                updateFaderMeter(fader);
+            } catch (e) {
+                // Silently ignore - /status poll will show errors
+            }
+        }
+
+        // Fast meter poll at 200ms (5 Hz)
+        setInterval(fetchMeter, 200);
+        // Full status poll at 2s (PID values, connection, etc.)
+        setInterval(fetchStatus, 2000);
+        // Initial fetch
+        fetchStatus();
+    </script>
+</body>
+</html>
