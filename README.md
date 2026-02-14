@@ -140,7 +140,7 @@ Wants=network-online.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/x32
-ExecStart=/home/pi/x32/venv/bin/python app.py
+ExecStart=/home/pi/x32/venv/bin/gunicorn -w 1 --threads 4 -b 0.0.0.0:5000 app:app
 Restart=on-failure
 RestartSec=10
 Environment=PYTHONUNBUFFERED=1

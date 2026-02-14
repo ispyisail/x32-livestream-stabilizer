@@ -222,6 +222,4 @@ def set_fader():
 
 
 if __name__ == '__main__':
-    # It's generally not recommended to run Flask with debug=True in production
-    # For Raspberry Pi deployment, use a production-ready WSGI server like Gunicorn
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000)
