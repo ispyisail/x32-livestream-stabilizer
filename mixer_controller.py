@@ -510,49 +510,63 @@ class MixerStateManager:
 
             await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
 
-        # Stop meter subscription
+        logging.info("Livestream monitoring loop exited.")
+
+    async def _cleanup_mixer(self):
+        """Clean up mixer connection and reset state."""
         try:
             if self._meter_keepalive_task and not self._meter_keepalive_task.done():
                 self._meter_keepalive_task.cancel()
             if self._meter_transport:
                 self._meter_transport.close()
                 self._meter_transport = None
-            logging.info("Meter UDP subscription stopped.")
         except Exception as e:
-            logging.error(f"Error stopping meter subscription: {e}")
-
-        # Unsubscribe when monitoring stops (this ends the subscribe loop)
+            logging.debug(f"Meter cleanup error: {e}")
         try:
-            await self._mixer.unsubscribe()
-            if self._subscribe_task and not self._subscribe_task.done():
-                self._subscribe_task.cancel()
-            logging.info("Unsubscribed from mixer updates.")
+            if self._mixer:
+                await self._mixer.unsubscribe()
+                if self._subscribe_task and not self._subscribe_task.done():
+                    self._subscribe_task.cancel()
+                await self._mixer.stop()
         except Exception as e:
-            logging.error(f"Error unsubscribing: {e}")
-
-        logging.info("Livestream monitoring stopped.")
+            logging.debug(f"Mixer cleanup error: {e}")
+        self._mixer = None
+        self.mixer_connected = False
         self.current_level_db = None
         self._smoothed_level_db = None
-        self.status_message = "Monitoring stopped"
 
     async def _run_mixer_loop_async(self):
         """
         Main asynchronous function to connect and run the monitor.
+        Automatically reconnects if the mixer goes offline, unless the
+        user has manually stopped monitoring via stop_monitoring().
         """
-        if await self._connect_to_mixer_async():
-            try:
-                await self._monitor_livestream_level_async()
-            except Exception as e:
-                logging.critical(f"An error occurred during mixer interaction: {e}")
-            finally:
-                if self._mixer:
-                    await self._mixer.stop()
-                    logging.info("Mixer communication stopped.")
-                self.mixer_connected = False
-                self.status_message = "Disconnected"
-        else:
-            logging.critical("Could not establish connection to the mixer. Exiting mixer control loop.")
-            self.status_message = "Connection failed"
+        RECONNECT_DELAY = 10  # seconds between reconnect attempts
+
+        while not self._stop_event.is_set():
+            if await self._connect_to_mixer_async():
+                try:
+                    await self._monitor_livestream_level_async()
+                except Exception as e:
+                    logging.error(f"Monitoring error: {e}")
+                finally:
+                    await self._cleanup_mixer()
+
+            # If user manually stopped, don't reconnect
+            if self._stop_event.is_set():
+                self.status_message = "Stopped"
+                break
+
+            # Connection lost or failed — wait and retry
+            self.status_message = f"Reconnecting in {RECONNECT_DELAY}s..."
+            logging.info(f"Will attempt to reconnect in {RECONNECT_DELAY} seconds...")
+            for _ in range(RECONNECT_DELAY):
+                if self._stop_event.is_set():
+                    self.status_message = "Stopped"
+                    return
+                await asyncio.sleep(1)
+
+        self.status_message = "Stopped"
 
     def _start_mixer_thread(self):
         """
