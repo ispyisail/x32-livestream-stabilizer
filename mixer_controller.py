@@ -74,6 +74,43 @@ def x32_float_to_db(f):
     return 10.0
 
 
+def db_to_x32_float(db):
+    """
+    Inverse of x32_float_to_db: convert dB (-90..+10) to X32 fader float (0.0..1.0).
+    """
+    if db <= -90.0:
+        return 0.0
+    if db < -60.0:
+        return (db + 90.0) / 30.0 * 0.0625         # 0.0 .. 0.0625
+    if db < -30.0:
+        return (db + 60.0) / 30.0 * 0.1875 + 0.0625  # 0.0625 .. 0.25
+    if db < -10.0:
+        return (db + 30.0) / 20.0 * 0.25 + 0.25     # 0.25 .. 0.5
+    if db < 0.0:
+        return (db + 10.0) / 10.0 * 0.25 + 0.5      # 0.5 .. 0.75
+    if db <= 10.0:
+        return db / 10.0 * 0.25 + 0.75              # 0.75 .. 1.0
+    return 1.0
+
+
+def _build_fader_osc_address(bus_id):
+    """
+    Build the raw X32 OSC address for a fader (float 0-1 scale).
+      int 1-16       -> "/bus/01/mix/fader"
+      "main_st"      -> "/main/st/mix/fader"
+      "mtx1".."mtx6" -> "/mtx/01/mix/fader"
+    """
+    if isinstance(bus_id, int):
+        return f"/bus/{bus_id:02d}/mix/fader"
+    s = str(bus_id)
+    if s == "main_st":
+        return "/main/st/mix/fader"
+    if s.startswith("mtx"):
+        n = int(s[3:])
+        return f"/mtx/{n:02d}/mix/fader"
+    return f"/bus/{int(s):02d}/mix/fader"
+
+
 def _build_osc_message(address, *args):
     """
     Build a raw OSC message as bytes.
@@ -200,6 +237,10 @@ class MixerStateManager:
         self.MIN_FADER_DB = -80.0 # Effectively muted
         self.MAX_FADER_DB = 10.0  # Max output
 
+        # Signal threshold: don't adjust fader if meter level is below this
+        # (prevents PID from reacting to noise floor / silence)
+        self.SIGNAL_THRESHOLD_DB = -60.0
+
         # Connection retry parameters
         self.MAX_RETRY_ATTEMPTS = 5
         self.RETRY_DELAY_SECONDS = 5
@@ -215,6 +256,22 @@ class MixerStateManager:
         self._subscribe_task = None
         self._meter_transport = None
         self._meter_keepalive_task = None
+        self._fader_osc_address = None
+        self._initial_fader_db = None  # saved on monitor start for restore
+
+    def _send_fader_osc(self, fader_db):
+        """
+        Send a fader SET command directly via raw UDP, bypassing the
+        behringer-mixer library (which has a type bug in set_value).
+        """
+        if not self._meter_transport or not self._fader_osc_address:
+            return
+        fader_float = db_to_x32_float(fader_db)
+        msg = _build_osc_message(self._fader_osc_address, fader_float)
+        try:
+            self._meter_transport.sendto(msg)
+        except Exception as e:
+            logging.debug(f"Fader OSC send error: {e}")
 
     def _fader_update_callback(self, data):
         """
@@ -269,8 +326,9 @@ class MixerStateManager:
         logging.info(f"Loaded {len(self._mixer.state())} state keys from mixer.")
 
         self._target_fader_key = _build_fader_db_key(self.LIVESTREAM_BUS_NUMBER)
-        logging.info(f"Starting livestream level monitor for key '{self._target_fader_key}' with PID control.")
-        logging.info(f"Target Level: {self.TARGET_LEVEL_DB} dB, PID Gains: Kp={self.KP}, Ki={self.KI}, Kd={self.KD}")
+        self._fader_osc_address = _build_fader_osc_address(self.LIVESTREAM_BUS_NUMBER)
+        logging.info(f"Starting livestream level monitor for key '{self._target_fader_key}' (OSC: {self._fader_osc_address}) with PID control.")
+        logging.info(f"Target Level: {self.TARGET_LEVEL_DB} dB, Signal Threshold: {self.SIGNAL_THRESHOLD_DB} dB, PID Gains: Kp={self.KP}, Ki={self.KI}, Kd={self.KD}")
 
         pid = PID(self.KP, self.KI, self.KD, setpoint=self.TARGET_LEVEL_DB,
                   sample_time=self.ADJUSTMENT_INTERVAL_SECONDS)
@@ -281,6 +339,8 @@ class MixerStateManager:
             if initial_fader_db is not None:
                 pid.set_auto_mode(True, last_output=initial_fader_db)
                 self.current_fader_db = initial_fader_db
+                self._initial_fader_db = initial_fader_db
+                logging.info(f"Initial fader position: {initial_fader_db:.2f} dB (saved for restore)")
             else:
                 logging.warning(f"Could not read initial fader value for '{self._target_fader_key}', starting PID from scratch.")
                 pid.set_auto_mode(True)
@@ -335,15 +395,25 @@ class MixerStateManager:
                     await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
                     continue
 
+                # Don't adjust fader when signal is below threshold (silence/noise floor)
+                if self.current_level_db < self.SIGNAL_THRESHOLD_DB:
+                    logging.debug(f"Signal below threshold ({self.current_level_db:.1f} dB < {self.SIGNAL_THRESHOLD_DB:.1f} dB), holding fader.")
+                    # Reset PID integral to prevent windup during silence
+                    pid.set_auto_mode(False)
+                    pid.set_auto_mode(True, last_output=self.current_fader_db)
+                    await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
+                    continue
+
                 desired_fader_db = pid(self.current_level_db)
 
-                logging.info(f"Monitor '{self._target_fader_key}' - Current Level: {self.current_level_db:.2f} dB, Current Fader: {self.current_fader_db:.2f} dB, Desired Fader (PID): {desired_fader_db:.2f} dB")
+                logging.info(f"Monitor '{self._target_fader_key}' - Level: {self.current_level_db:.2f} dB, Fader: {self.current_fader_db:.2f} dB, PID: {desired_fader_db:.2f} dB")
 
-                if abs(desired_fader_db - self.current_fader_db) > 0.01:
-                    await self._mixer.set_value(self._target_fader_key, desired_fader_db)
-                    logging.info(f"Adjusting '{self._target_fader_key}' fader to {desired_fader_db:.2f} dB")
+                if abs(desired_fader_db - self.current_fader_db) > 0.1:
+                    self._send_fader_osc(desired_fader_db)
+                    self.current_fader_db = desired_fader_db
+                    logging.info(f"Adjusting fader to {desired_fader_db:.2f} dB")
                 else:
-                    logging.debug("Fader adjustment not significant enough or already at desired position.")
+                    logging.debug("Fader adjustment not significant enough.")
 
             except Exception as e:
                 logging.error(f"Error in monitoring loop: {e}")
@@ -588,20 +658,16 @@ class MixerStateManager:
     def set_fader_level(self, fader_db):
         """
         Manually set the monitored fader to a specific dB value.
-        Sends the command to the mixer via the asyncio loop.
+        Uses raw OSC to bypass behringer-mixer library type bug.
         """
         fader_db = max(self.MIN_FADER_DB, min(self.MAX_FADER_DB, fader_db))
-        if not self.mixer_connected or not self._mixer or not self._loop:
-            logging.warning("Cannot set fader: mixer not connected.")
+        if not self.mixer_connected or not self._meter_transport:
+            logging.warning("Cannot set fader: mixer not connected or meter transport not available.")
             return False
-        key = _build_fader_db_key(self.LIVESTREAM_BUS_NUMBER)
-        future = asyncio.run_coroutine_threadsafe(
-            self._mixer.set_value(key, fader_db), self._loop
-        )
         try:
-            future.result(timeout=2)
+            self._send_fader_osc(fader_db)
             self.current_fader_db = fader_db
-            logging.info(f"Manually set fader '{key}' to {fader_db:.2f} dB")
+            logging.info(f"Manually set fader to {fader_db:.2f} dB")
             return True
         except Exception as e:
             logging.error(f"Error setting fader: {e}")
