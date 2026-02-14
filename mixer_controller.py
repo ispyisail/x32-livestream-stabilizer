@@ -4,6 +4,7 @@ import math
 import struct
 import threading
 import json
+import os
 import time
 from datetime import datetime
 from behringer_mixer import mixer_api
@@ -240,10 +241,11 @@ class MixerStateManager:
         self._thread = None
         self._stop_event = threading.Event()
         self._backup_dir = "mixer_backups"
+        self._config_file = "config.json"
 
         # Configuration Parameters for Livestream Stabilizer
-        self.MIXER_IP = "192.168.150.10"  # <<< IMPORTANT: Change this to your X32's IP address
-        self.LIVESTREAM_BUS_NUMBER = "mtx1"  # Matrix 1 (Video M1) for livestream output
+        self.MIXER_IP = "192.168.150.10"
+        self.LIVESTREAM_BUS_NUMBER = "mtx1"
 
         self.TARGET_LEVEL_DB = -30.0     # Desired output level in dB (output = input + fader)
 
@@ -291,6 +293,42 @@ class MixerStateManager:
         self._initial_fader_db = None  # saved on monitor start for restore
         self._manual_override_until = 0  # timestamp: PID paused until this time
         self._in_silence = False  # True when signal is below threshold; fader frozen
+
+        # Load saved settings from config file (overrides defaults above)
+        self._load_config()
+
+    def _load_config(self):
+        """Load persisted settings from config.json, if it exists."""
+        try:
+            if os.path.exists(self._config_file):
+                with open(self._config_file, 'r') as f:
+                    cfg = json.load(f)
+                self.MIXER_IP = cfg.get("mixer_ip", self.MIXER_IP)
+                self.LIVESTREAM_BUS_NUMBER = cfg.get("livestream_bus", self.LIVESTREAM_BUS_NUMBER)
+                self.TARGET_LEVEL_DB = cfg.get("target_level_db", self.TARGET_LEVEL_DB)
+                self.MAX_FADER_SLEW_DB = cfg.get("slew_rate", self.MAX_FADER_SLEW_DB)
+                self.METER_SMOOTHING = cfg.get("smoothing", self.METER_SMOOTHING)
+                self.SIGNAL_THRESHOLD_DB = cfg.get("silence_threshold", self.SIGNAL_THRESHOLD_DB)
+                logging.info(f"Loaded settings from {self._config_file}")
+        except Exception as e:
+            logging.warning(f"Could not load config: {e}, using defaults")
+
+    def _save_config(self):
+        """Persist current settings to config.json."""
+        cfg = {
+            "mixer_ip": self.MIXER_IP,
+            "livestream_bus": self.LIVESTREAM_BUS_NUMBER,
+            "target_level_db": self.TARGET_LEVEL_DB,
+            "slew_rate": self.MAX_FADER_SLEW_DB,
+            "smoothing": self.METER_SMOOTHING,
+            "silence_threshold": self.SIGNAL_THRESHOLD_DB,
+        }
+        try:
+            with open(self._config_file, 'w') as f:
+                json.dump(cfg, f, indent=2)
+            logging.debug(f"Settings saved to {self._config_file}")
+        except Exception as e:
+            logging.warning(f"Could not save config: {e}")
 
     def _send_fader_osc(self, fader_db):
         """
@@ -702,10 +740,12 @@ class MixerStateManager:
         self.MAX_FADER_SLEW_DB = slew_rate
         self.METER_SMOOTHING = smoothing
         self.SIGNAL_THRESHOLD_DB = silence_threshold
+        self._save_config()
         logging.info(f"Stabilizer tuning updated: slew={slew_rate}, smoothing={smoothing}, threshold={silence_threshold}")
 
     def set_target_level(self, target_level_db):
         self.TARGET_LEVEL_DB = target_level_db
+        self._save_config()
         logging.info(f"Target level updated to {target_level_db} dB. Restart monitoring for changes to take effect.")
 
     def set_fader_level(self, fader_db):
@@ -733,6 +773,7 @@ class MixerStateManager:
         Accepts: int (bus 1-16), "main_st", "mtx1" through "mtx6"
         """
         self.LIVESTREAM_BUS_NUMBER = bus_id
+        self._save_config()
         logging.info(f"Livestream monitoring bus/matrix set to: {bus_id} (key: {_build_fader_db_key(bus_id)}). Restart monitoring for changes to take effect.")
 
     def set_mixer_ip(self, ip):
@@ -744,6 +785,7 @@ class MixerStateManager:
             logging.warning("Cannot change IP while monitoring is running.")
             return False
         self.MIXER_IP = ip
+        self._save_config()
         logging.info(f"Mixer IP set to: {ip}")
         return True
 

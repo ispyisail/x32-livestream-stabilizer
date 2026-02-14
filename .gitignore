@@ -5,4 +5,5 @@ venv/
 .venv/
 mixer_backups/
 x32_config_backup.json
+config.json
 .claude/
