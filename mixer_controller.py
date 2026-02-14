@@ -184,9 +184,7 @@ class MixerStateManager:
 
         # Configuration Parameters for Livestream Stabilizer
         self.MIXER_IP = "192.168.150.10"  # <<< IMPORTANT: Change this to your X32's IP address
-        self.LIVESTREAM_BUS_NUMBER = 1   # Example: Assuming livestream output is on Bus 1
-                                    # You need to verify which bus/channel your livestream audio
-                                    # is routed through on your X32. Could be a Mix Bus, Matrix, or Main LR.
+        self.LIVESTREAM_BUS_NUMBER = "mtx1"  # Matrix 1 (Video M1) for livestream output
 
         self.TARGET_LEVEL_DB = -6.0      # Desired average output level in dB
 
@@ -579,6 +577,28 @@ class MixerStateManager:
     def set_target_level(self, target_level_db):
         self.TARGET_LEVEL_DB = target_level_db
         logging.info(f"Target level updated to {target_level_db} dB. Restart monitoring for changes to take effect.")
+
+    def set_fader_level(self, fader_db):
+        """
+        Manually set the monitored fader to a specific dB value.
+        Sends the command to the mixer via the asyncio loop.
+        """
+        fader_db = max(self.MIN_FADER_DB, min(self.MAX_FADER_DB, fader_db))
+        if not self.mixer_connected or not self._mixer or not self._loop:
+            logging.warning("Cannot set fader: mixer not connected.")
+            return False
+        key = _build_fader_db_key(self.LIVESTREAM_BUS_NUMBER)
+        future = asyncio.run_coroutine_threadsafe(
+            self._mixer.set_value(key, fader_db), self._loop
+        )
+        try:
+            future.result(timeout=2)
+            self.current_fader_db = fader_db
+            logging.info(f"Manually set fader '{key}' to {fader_db:.2f} dB")
+            return True
+        except Exception as e:
+            logging.error(f"Error setting fader: {e}")
+            return False
 
     def set_livestream_bus_number(self, bus_id):
         """

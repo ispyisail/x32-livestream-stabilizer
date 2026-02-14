@@ -89,6 +89,21 @@
         .meter-labels span:nth-child(5) { position: relative; top: 10px; }
         .meter-labels span:nth-child(6) { position: relative; top: 15px; }
 
+        .fader-slider-group {
+            margin-top: 10px;
+        }
+        .fader-slider-group input[type="range"] {
+            width: 100%;
+            cursor: pointer;
+        }
+        .fader-slider-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75em;
+            color: #666;
+            padding: 0 2px;
+        }
+
         .suggestions-box {
             margin-top: 20px;
             padding: 10px;
@@ -157,6 +172,20 @@
                     </div>
                 </div>
                 <div class="status-item"><strong>Target Level:</strong> <span id="target_level">N/A</span></div>
+                <hr>
+                <h2>Fader Control</h2>
+                <div class="fader-slider-group">
+                    <input type="range" id="fader_slider" min="-80" max="10" step="0.5" value="0"
+                           orient="horizontal" oninput="onFaderSliderInput(this.value)">
+                    <div class="fader-slider-labels">
+                        <span>-80</span><span>-40</span><span>-20</span><span>-10</span><span>0</span><span>+10</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px; margin-top:5px;">
+                        <input type="number" id="fader_input" step="0.5" min="-80" max="10" value="0" style="width:70px; padding:4px;">
+                        <span>dB</span>
+                        <button onclick="sendFaderValue()" style="padding:5px 12px;">Set</button>
+                    </div>
+                </div>
             </div>
 
             <div class="control-box">
@@ -444,6 +473,34 @@
         }
 
 
+        // --- Fader slider control ---
+        let faderSendTimeout = null;
+        function onFaderSliderInput(val) {
+            document.getElementById('fader_input').value = val;
+            // Debounce: send after 100ms of no movement
+            clearTimeout(faderSendTimeout);
+            faderSendTimeout = setTimeout(() => sendFaderValue(), 100);
+        }
+
+        async function sendFaderValue() {
+            const val = parseFloat(document.getElementById('fader_input').value);
+            if (isNaN(val)) return;
+            document.getElementById('fader_slider').value = val;
+            try {
+                const response = await fetch('/set_fader', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fader_db: val })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    showMessage('Error: ' + (data.error || data.message), 'error');
+                }
+            } catch (e) {
+                showMessage('Failed to set fader: ' + e.message, 'error');
+            }
+        }
+
         // Fast meter polling (5 Hz) for smooth meter animation
         async function fetchMeter() {
             try {
@@ -455,6 +512,11 @@
                 document.getElementById('current_fader').textContent = `${fader.toFixed(2)} dB`;
                 updateSignalMeter(level, cachedTargetDb);
                 updateFaderMeter(fader);
+                // Sync slider if user isn't actively dragging
+                if (document.activeElement !== document.getElementById('fader_slider')) {
+                    document.getElementById('fader_slider').value = fader;
+                    document.getElementById('fader_input').value = fader.toFixed(1);
+                }
             } catch (e) {
                 // Silently ignore - /status poll will show errors
             }

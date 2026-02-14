@@ -167,6 +167,23 @@ def set_livestream_bus():
         return jsonify({"error": f"Invalid bus ID: {e}. Expected 'bus_id' as string or int."}), 400
 
 
+@app.route('/set_fader', methods=['POST'])
+def set_fader():
+    """
+    Manually set the monitored fader level.
+    Expects JSON: {'fader_db': float}
+    """
+    data = request.get_json()
+    try:
+        fader_db = float(data['fader_db'])
+        if mixer_manager.set_fader_level(fader_db):
+            return jsonify({"message": f"Fader set to {fader_db:.1f} dB"})
+        else:
+            return jsonify({"error": "Mixer not connected or command failed."}), 400
+    except (TypeError, KeyError, ValueError) as e:
+        return jsonify({"error": f"Invalid fader value: {e}"}), 400
+
+
 if __name__ == '__main__':
     # It's generally not recommended to run Flask with debug=True in production
     # For Raspberry Pi deployment, use a production-ready WSGI server like Gunicorn
