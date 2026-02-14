@@ -71,21 +71,25 @@ def stop_monitor():
     mixer_manager.stop_monitoring()
     return jsonify({"message": "Mixer monitoring stopped.", "status": mixer_manager.get_status()})
 
-@app.route('/set_pid', methods=['POST'])
-def set_pid():
+@app.route('/set_tuning', methods=['POST'])
+def set_tuning():
     """
-    Sets new PID gains.
-    Expects JSON: {'kp': float, 'ki': float, 'kd': float}
+    Sets stabilizer tuning parameters.
+    Expects JSON: {'slew_rate': float, 'smoothing': float, 'silence_threshold': float}
     """
     data = request.get_json()
     try:
-        kp = float(data['kp'])
-        ki = float(data['ki'])
-        kd = float(data['kd'])
-        mixer_manager.set_pid_gains(kp, ki, kd)
-        return jsonify({"message": "PID gains updated. Restart monitoring for changes to take effect.", "status": mixer_manager.get_status()})
+        slew_rate = float(data['slew_rate'])
+        smoothing = float(data['smoothing'])
+        silence_threshold = float(data['silence_threshold'])
+        # Validate ranges
+        slew_rate = max(0.5, min(10.0, slew_rate))
+        smoothing = max(0.05, min(0.5, smoothing))
+        silence_threshold = max(-90.0, min(-20.0, silence_threshold))
+        mixer_manager.set_tuning(slew_rate, smoothing, silence_threshold)
+        return jsonify({"message": "Stabilizer tuning updated.", "status": mixer_manager.get_status()})
     except (TypeError, KeyError, ValueError) as e:
-        return jsonify({"error": f"Invalid PID parameters: {e}. Expected kp, ki, kd as floats."}), 400
+        return jsonify({"error": f"Invalid tuning parameters: {e}"}), 400
 
 @app.route('/set_target_level', methods=['POST'])
 def set_target_level():
@@ -145,6 +149,39 @@ def analyze_routing():
     except Exception as e:
         logging.error(f"Error during routing analysis: {e}")
         return jsonify({"error": f"An unexpected error occurred during routing analysis: {e}"}), 500
+
+@app.route('/set_mixer_ip', methods=['POST'])
+def set_mixer_ip():
+    """
+    Sets the mixer IP address.
+    Expects JSON: {'ip': '192.168.x.x'}
+    """
+    data = request.get_json()
+    try:
+        ip = data['ip'].strip()
+        # Basic IP format validation
+        parts = ip.split('.')
+        if len(parts) != 4 or not all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+            return jsonify({"error": "Invalid IP address format."}), 400
+        if mixer_manager.set_mixer_ip(ip):
+            return jsonify({"message": f"Mixer IP set to {ip}.", "status": mixer_manager.get_status()})
+        else:
+            return jsonify({"error": "Cannot change IP while monitoring is running. Stop monitoring first."}), 400
+    except (TypeError, KeyError) as e:
+        return jsonify({"error": f"Invalid request: {e}. Expected 'ip' as string."}), 400
+
+@app.route('/output_list')
+def output_list():
+    """
+    Returns the list of all mixer outputs with their names.
+    Only works when connected.
+    """
+    if not mixer_manager.mixer_connected:
+        return jsonify({"error": "Mixer not connected."}), 400
+    result = mixer_manager.get_output_list()
+    if isinstance(result, dict) and "error" in result:
+        return jsonify(result), 500
+    return jsonify({"outputs": result})
 
 @app.route('/set_livestream_bus', methods=['POST'])
 def set_livestream_bus():

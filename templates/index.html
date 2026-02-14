@@ -89,42 +89,38 @@
         .meter-labels span:nth-child(5) { position: relative; top: 10px; }
         .meter-labels span:nth-child(6) { position: relative; top: 15px; }
 
-        .fader-slider-group {
-            margin-top: 10px;
-        }
-        .fader-slider-group input[type="range"] {
-            width: 100%;
-            cursor: pointer;
-        }
-        .fader-slider-labels {
-            display: flex;
-            justify-content: space-between;
-            font-size: 0.75em;
-            color: #666;
-            padding: 0 2px;
-        }
 
-        .suggestions-box {
-            margin-top: 20px;
-            padding: 10px;
-            background-color: #e9ecef;
-            border-radius: 5px;
-        }
-        .suggestions-box ul {
-            list-style: none;
-            padding: 0;
-        }
-        .suggestions-box li {
-            margin-bottom: 5px;
+
+        .ip-group {
             display: flex;
+            gap: 6px;
             align-items: center;
-            justify-content: space-between;
         }
-        .suggestions-box li button {
-            padding: 5px 10px;
-            font-size: 0.8em;
-            width: auto;
-            margin-left: 10px;
+        .ip-group input[type="text"] {
+            width: 150px;
+            padding: 6px 8px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            font-size: 0.95em;
+        }
+        .ip-group button {
+            padding: 6px 14px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+        .bus-select-group {
+            margin-top: 8px;
+        }
+        .bus-select-group select {
+            width: 100%;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            font-size: 0.95em;
         }
 
     </style>
@@ -136,14 +132,27 @@
         <div class="grid-container">
             <div class="status-box">
                 <h2>Current Status</h2>
-                <div class="status-item"><strong>Mixer IP:</strong> <span id="mixer_ip">N/A</span></div>
-                <div class="status-item"><strong>Bus Number:</strong> <span id="livestream_bus">N/A</span></div>
+                <div class="status-item">
+                    <strong>Mixer IP:</strong>
+                    <div class="ip-group">
+                        <input type="text" id="mixer_ip_input" placeholder="192.168.1.1" value="192.168.150.10">
+                        <button onclick="setMixerIp()">Set IP</button>
+                    </div>
+                </div>
+                <div class="status-item">
+                    <strong>Output:</strong>
+                    <div class="bus-select-group">
+                        <select id="bus_select" onchange="onBusSelectChange()">
+                            <option value="" disabled selected>Connect to populate...</option>
+                        </select>
+                    </div>
+                </div>
                 <div class="status-item"><strong>Connection:</strong> <span id="connected">N/A</span></div>
                 <div class="status-item"><strong>Overall Status:</strong> <span id="overall_status">N/A</span></div>
                 <hr>
                 <div class="level-meter-display">
                     <div class="meter-column">
-                        <div class="meter-label">Signal</div>
+                        <div class="meter-label">Input</div>
                         <div class="meter-container">
                             <div id="level_bar" class="level-bar"></div>
                         </div>
@@ -164,28 +173,19 @@
                     </div>
                     <div class="level-values">
                         <div class="level-value">
-                            <strong>Signal:</strong> <span id="current_level_numeric">N/A</span>
+                            <strong>Input Level:</strong> <span id="current_level_numeric">N/A</span>
                         </div>
                         <div class="level-value">
-                            <strong>Fader:</strong> <span id="current_fader">N/A</span>
+                            <strong>Fader Position:</strong> <span id="current_fader">N/A</span>
                         </div>
                     </div>
                 </div>
-                <div class="status-item"><strong>Target Level:</strong> <span id="target_level">N/A</span></div>
-                <hr>
-                <h2>Fader Control</h2>
-                <div class="fader-slider-group">
-                    <input type="range" id="fader_slider" min="-80" max="10" step="0.5" value="0"
-                           orient="horizontal" oninput="onFaderSliderInput(this.value)">
-                    <div class="fader-slider-labels">
-                        <span>-80</span><span>-40</span><span>-20</span><span>-10</span><span>0</span><span>+10</span>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:8px; margin-top:5px;">
-                        <input type="number" id="fader_input" step="0.5" min="-80" max="10" value="0" style="width:70px; padding:4px;">
-                        <span>dB</span>
-                        <button onclick="sendFaderValue()" style="padding:5px 12px;">Set</button>
-                    </div>
+                <div style="font-size:0.8em; color:#666; margin-bottom:8px;">
+                    <span style="color:#4CAF50;">&#9632;</span> Normal
+                    &nbsp;<span style="color:orange;">&#9632;</span> Hot (above -6 dB)
+                    &nbsp;<span style="color:red;">&#9632;</span> Clipping (0 dB+)
                 </div>
+                <div class="status-item"><strong>Target Level:</strong> <span id="target_level">N/A</span></div>
             </div>
 
             <div class="control-box">
@@ -197,31 +197,35 @@
 
                 <hr>
 
-                <h2>Adjust PID Gains</h2>
+                <h2>Target Output Level</h2>
                 <div class="input-group">
-                    <label for="new_kp">Kp (Proportional):</label>
-                    <input type="number" step="0.01" id="new_kp" value="0.5">
+                    <label for="new_target_level">Desired Output (dB):</label>
+                    <input type="number" step="0.5" id="new_target_level" value="-38.0">
+                    <button onclick="setTargetLevel()">Set Target</button>
                 </div>
-                <div class="input-group">
-                    <label for="new_ki">Ki (Integral):</label>
-                    <input type="number" step="0.001" id="new_ki" value="0.05">
-                </div>
-                <div class="input-group">
-                    <label for="new_kd">Kd (Derivative):</label>
-                    <input type="number" step="0.001" id="new_kd" value="0.01">
-                </div>
-                <button onclick="setPidGains()">Set PID Gains</button>
-                <p><strong>Current:</strong> Kp:<span id="kp_val">N/A</span> Ki:<span id="ki_val">N/A</span> Kd:<span id="kd_val">N/A</span></p>
+                <p><strong>Current:</strong> <span id="target_level_current">N/A</span></p>
+                <p><em>Fader auto-adjusts so output = input + fader hits this target.</em></p>
 
                 <hr>
 
-                <h2>Adjust Target Level</h2>
+                <h2>Stabilizer Tuning</h2>
                 <div class="input-group">
-                    <label for="new_target_level">New Target Level (dB):</label>
-                    <input type="number" step="0.1" id="new_target_level" value="-6.0">
-                    <button onclick="setTargetLevel()">Set Target Level</button>
+                    <label for="new_slew">Slew Rate (dB/cycle):</label>
+                    <input type="number" step="0.5" min="0.5" max="10" id="new_slew" value="2.0">
+                    <p style="margin:2px 0;color:#666;font-size:0.85em;">Max fader movement per 0.5s. Lower = smoother.</p>
                 </div>
-                <p><em>Note: Changes to PID gains or Target Level take effect on next monitoring cycle. Consider restarting monitor for immediate effect.</em></p>
+                <div class="input-group">
+                    <label for="new_smoothing">Meter Smoothing (0.05 - 0.5):</label>
+                    <input type="number" step="0.05" min="0.05" max="0.5" id="new_smoothing" value="0.15">
+                    <p style="margin:2px 0;color:#666;font-size:0.85em;">Noise filter. Lower = smoother but slower to react.</p>
+                </div>
+                <div class="input-group">
+                    <label for="new_threshold">Silence Threshold (dB):</label>
+                    <input type="number" step="1" min="-90" max="-20" id="new_threshold" value="-60">
+                    <p style="margin:2px 0;color:#666;font-size:0.85em;">Below this, fader freezes (silence/between tracks).</p>
+                </div>
+                <button onclick="setStabilizerTuning()">Apply Tuning</button>
+                <p><strong>Current:</strong> Slew: <span id="slew_val">N/A</span> dB | Smooth: <span id="smooth_val">N/A</span> | Threshold: <span id="threshold_val">N/A</span> dB</p>
 
                 <hr>
 
@@ -229,16 +233,6 @@
                 <div class="input-group">
                     <button onclick="backupSettings()">Backup Mixer Settings</button>
                     <p><em>Saves a snapshot of current mixer settings to a JSON file.</em></p>
-                </div>
-                <div class="input-group">
-                    <button onclick="analyzeRouting()">Analyze Livestream Routing</button>
-                    <p><em>Suggests potential livestream output buses/matrices.</em></p>
-                    <div id="routing_suggestions" class="suggestions-box" style="display:none;">
-                        <h3>Suggestions:</h3>
-                        <ul id="suggestions_list">
-                            <!-- Suggestions will be populated here by JavaScript -->
-                        </ul>
-                    </div>
                 </div>
 
             </div>
@@ -265,12 +259,12 @@
             return Math.max(0, Math.min(1, n)) * METER_HEIGHT;
         }
 
-        function updateSignalMeter(level_db, target_level_db) {
+        function updateSignalMeter(level_db) {
             const bar = document.getElementById('level_bar');
             bar.style.height = dbToHeight(level_db) + 'px';
             if (level_db >= 0) {
                 bar.style.backgroundColor = 'red';
-            } else if (level_db >= target_level_db + 2) {
+            } else if (level_db >= -6) {
                 bar.style.backgroundColor = 'orange';
             } else {
                 bar.style.backgroundColor = '#4CAF50';
@@ -282,43 +276,57 @@
             bar.style.height = dbToHeight(fader_db) + 'px';
         }
 
-        // Cached target for fast meter polling (updated by /status)
-        let cachedTargetDb = -6.0;
 
+
+        // Track connection state to auto-populate dropdown once
+        let wasConnected = false;
+        let outputListLoaded = false;
 
         async function fetchStatus() {
             try {
                 const response = await fetch('/status');
                 const data = await response.json();
-                document.getElementById('mixer_ip').textContent = data.mixer_ip;
-                document.getElementById('livestream_bus').textContent = data.livestream_bus;
+
+                // Sync IP input only if user isn't editing it
+                if (document.activeElement !== document.getElementById('mixer_ip_input')) {
+                    document.getElementById('mixer_ip_input').value = data.mixer_ip;
+                }
+
                 document.getElementById('connected').textContent = data.connected ? 'Yes' : 'No';
                 document.getElementById('overall_status').textContent = data.status_message;
-                
+
                 const currentLevel = parseFloat(data.current_level_db);
                 const currentFader = parseFloat(data.current_fader_db);
                 const targetLevel = parseFloat(data.target_level_db);
-                cachedTargetDb = isNaN(targetLevel) ? -6.0 : targetLevel;
+
 
                 document.getElementById('current_level_numeric').textContent = isNaN(currentLevel) ? 'N/A' : `${currentLevel.toFixed(2)} dB`;
                 document.getElementById('current_fader').textContent = isNaN(currentFader) ? 'N/A' : `${currentFader.toFixed(2)} dB`;
                 document.getElementById('target_level').textContent = data.target_level_db;
+                document.getElementById('target_level_current').textContent = data.target_level_db;
 
-                document.getElementById('kp_val').textContent = data.kp;
-                document.getElementById('ki_val').textContent = data.ki;
-                document.getElementById('kd_val').textContent = data.kd;
+                document.getElementById('slew_val').textContent = data.slew_rate;
+                document.getElementById('smooth_val').textContent = data.smoothing;
+                document.getElementById('threshold_val').textContent = data.silence_threshold;
 
                 if (!isNaN(currentLevel)) {
-                    updateSignalMeter(currentLevel, cachedTargetDb);
+                    updateSignalMeter(currentLevel);
                 }
                 if (!isNaN(currentFader)) {
                     updateFaderMeter(currentFader);
                 }
 
-                // Update routing suggestions if available and not already displayed
-                if (data.suggested_livestream_output && data.suggested_livestream_output.length > 0) {
-                    displayRoutingSuggestions(data.suggested_livestream_output);
+                // Auto-populate output dropdown when first connected
+                if (data.connected && !wasConnected) {
+                    outputListLoaded = false;
                 }
+                if (data.connected && !outputListLoaded) {
+                    await fetchOutputList(data.livestream_bus);
+                }
+                if (!data.connected) {
+                    outputListLoaded = false;
+                }
+                wasConnected = data.connected;
 
             } catch (error) {
                 console.error('Error fetching status:', error);
@@ -363,15 +371,15 @@
             }
         }
 
-        async function setPidGains() {
-            const newKp = document.getElementById('new_kp').value;
-            const newKi = document.getElementById('new_ki').value;
-            const newKd = document.getElementById('new_kd').value;
+        async function setStabilizerTuning() {
+            const slew = parseFloat(document.getElementById('new_slew').value);
+            const smoothing = parseFloat(document.getElementById('new_smoothing').value);
+            const threshold = parseFloat(document.getElementById('new_threshold').value);
             try {
-                const response = await fetch('/set_pid', {
+                const response = await fetch('/set_tuning', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 'kp': parseFloat(newKp), 'ki': parseFloat(newKi), 'kd': parseFloat(newKd) })
+                    body: JSON.stringify({ slew_rate: slew, smoothing: smoothing, silence_threshold: threshold })
                 });
                 const data = await response.json();
                 if (response.ok) {
@@ -381,8 +389,8 @@
                 }
                 fetchStatus();
             } catch (error) {
-                console.error('Error setting PID gains:', error);
-                showMessage('Failed to set PID gains: ' + error.message, 'error');
+                console.error('Error setting tuning:', error);
+                showMessage('Failed to set tuning: ' + error.message, 'error');
             }
         }
 
@@ -404,102 +412,83 @@
             }
         }
 
-        async function analyzeRouting() {
+        async function setMixerIp() {
+            const ip = document.getElementById('mixer_ip_input').value.trim();
             try {
-                const response = await fetch('/analyze_routing', {
-                    method: 'POST'
+                const response = await fetch('/set_mixer_ip', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ip: ip })
                 });
                 const data = await response.json();
                 if (response.ok) {
                     showMessage(data.message, 'success');
-                    displayRoutingSuggestions(data.suggestions);
                 } else {
                     showMessage('Error: ' + (data.error || data.message), 'error');
                 }
+                fetchStatus();
             } catch (error) {
-                console.error('Error analyzing routing:', error);
-                showMessage('Failed to analyze routing: ' + error.message, 'error');
+                showMessage('Failed to set IP: ' + error.message, 'error');
             }
         }
 
-        function displayRoutingSuggestions(suggestions) {
-            const suggestionsList = document.getElementById('suggestions_list');
-            suggestionsList.innerHTML = ''; // Clear previous suggestions
-            const suggestionsBox = document.getElementById('routing_suggestions');
+        async function fetchOutputList(currentBusId) {
+            try {
+                const response = await fetch('/output_list');
+                const data = await response.json();
+                if (!response.ok) return;
 
-            if (suggestions.length === 0) {
-                suggestionsList.innerHTML = '<li>No clear livestream outputs found.</li>';
-                suggestionsBox.style.display = 'block';
-                return;
+                const select = document.getElementById('bus_select');
+                select.innerHTML = '';
+                data.outputs.forEach(output => {
+                    const opt = document.createElement('option');
+                    opt.value = output.id;
+                    // Format: "Matrix 1 — Video M1" or "Bus 3 — FOH" or "Main ST"
+                    if (output.type === 'Main') {
+                        opt.textContent = output.name;
+                    } else {
+                        const defaultName = output.type === 'Bus' ? `Bus ${output.id}` : `Matrix ${output.id.toString().replace('mtx', '')}`;
+                        if (output.name !== defaultName) {
+                            opt.textContent = `${defaultName} — ${output.name}`;
+                        } else {
+                            opt.textContent = defaultName;
+                        }
+                    }
+                    // Select the currently active bus
+                    if (String(output.id) === String(currentBusId)) {
+                        opt.selected = true;
+                    }
+                    select.appendChild(opt);
+                });
+                outputListLoaded = true;
+            } catch (error) {
+                console.error('Error fetching output list:', error);
             }
-
-            suggestions.forEach(suggestion => {
-                const li = document.createElement('li');
-                let suggestionText = `${suggestion.type} ${suggestion.id}`;
-                if (suggestion.name) {
-                    suggestionText += ` (${suggestion.name})`;
-                }
-                suggestionText += ` - Fader: ${suggestion.fader_db.toFixed(2)} dB`;
-
-                li.textContent = suggestionText;
-
-                const selectButton = document.createElement('button');
-                selectButton.textContent = 'Select';
-                selectButton.onclick = () => selectLivestreamBus(suggestion.id);
-                li.appendChild(selectButton);
-                suggestionsList.appendChild(li);
-            });
-            suggestionsBox.style.display = 'block';
         }
 
-        async function selectLivestreamBus(bus_id) {
+        async function onBusSelectChange() {
+            const select = document.getElementById('bus_select');
+            let busId = select.value;
+            // Convert to int if numeric (bus 1-16)
+            if (/^\d+$/.test(busId)) busId = parseInt(busId);
             try {
                 const response = await fetch('/set_livestream_bus', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 'bus_id': bus_id })
+                    body: JSON.stringify({ bus_id: busId })
                 });
                 const data = await response.json();
                 if (response.ok) {
                     showMessage(data.message, 'success');
-                    fetchStatus(); // Update status with new bus
                 } else {
                     showMessage('Error: ' + (data.error || data.message), 'error');
                 }
+                fetchStatus();
             } catch (error) {
-                console.error('Error selecting livestream bus:', error);
-                showMessage('Failed to select livestream bus: ' + error.message, 'error');
+                showMessage('Failed to select output: ' + error.message, 'error');
             }
         }
 
-
-        // --- Fader slider control ---
-        let faderSendTimeout = null;
-        function onFaderSliderInput(val) {
-            document.getElementById('fader_input').value = val;
-            // Debounce: send after 100ms of no movement
-            clearTimeout(faderSendTimeout);
-            faderSendTimeout = setTimeout(() => sendFaderValue(), 100);
-        }
-
-        async function sendFaderValue() {
-            const val = parseFloat(document.getElementById('fader_input').value);
-            if (isNaN(val)) return;
-            document.getElementById('fader_slider').value = val;
-            try {
-                const response = await fetch('/set_fader', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ fader_db: val })
-                });
-                const data = await response.json();
-                if (!response.ok) {
-                    showMessage('Error: ' + (data.error || data.message), 'error');
-                }
-            } catch (e) {
-                showMessage('Failed to set fader: ' + e.message, 'error');
-            }
-        }
 
         // Fast meter polling (5 Hz) for smooth meter animation
         async function fetchMeter() {
@@ -508,14 +497,15 @@
                 const data = await response.json();
                 const level = data.level_db;
                 const fader = data.fader_db;
-                document.getElementById('current_level_numeric').textContent = `${level.toFixed(2)} dB`;
-                document.getElementById('current_fader').textContent = `${fader.toFixed(2)} dB`;
-                updateSignalMeter(level, cachedTargetDb);
-                updateFaderMeter(fader);
-                // Sync slider if user isn't actively dragging
-                if (document.activeElement !== document.getElementById('fader_slider')) {
-                    document.getElementById('fader_slider').value = fader;
-                    document.getElementById('fader_input').value = fader.toFixed(1);
+                if (level !== null && level !== undefined) {
+                    document.getElementById('current_level_numeric').textContent = `${level.toFixed(2)} dB`;
+                    updateSignalMeter(level);
+                } else {
+                    document.getElementById('current_level_numeric').textContent = 'Waiting...';
+                }
+                if (fader !== null && fader !== undefined) {
+                    document.getElementById('current_fader').textContent = `${fader.toFixed(2)} dB`;
+                    updateFaderMeter(fader);
                 }
             } catch (e) {
                 // Silently ignore - /status poll will show errors
