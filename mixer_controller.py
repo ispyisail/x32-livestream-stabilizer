@@ -205,7 +205,7 @@ class MixerStateManager:
         self.RETRY_DELAY_SECONDS = 5
 
         # Current status (for web UI)
-        self.current_level_db = 0.0
+        self.current_level_db = None  # None until real meter data arrives
         self.current_fader_db = 0.0
         self.status_message = "Not running"
         self.suggested_livestream_output = []
@@ -329,6 +329,12 @@ class MixerStateManager:
                 if fader_val is not None:
                     self.current_fader_db = fader_val
 
+                # Skip PID until real meter data has arrived
+                if self.current_level_db is None:
+                    logging.info("Waiting for meter data...")
+                    await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
+                    continue
+
                 desired_fader_db = pid(self.current_level_db)
 
                 logging.info(f"Monitor '{self._target_fader_key}' - Current Level: {self.current_level_db:.2f} dB, Current Fader: {self.current_fader_db:.2f} dB, Desired Fader (PID): {desired_fader_db:.2f} dB")
@@ -366,6 +372,7 @@ class MixerStateManager:
             logging.error(f"Error unsubscribing: {e}")
 
         logging.info("Livestream monitoring stopped.")
+        self.current_level_db = None
         self.status_message = "Monitoring stopped"
 
     async def _run_mixer_loop_async(self):
@@ -557,7 +564,7 @@ class MixerStateManager:
         return {
             "connected": self.mixer_connected,
             "status_message": self.status_message,
-            "current_level_db": f"{self.current_level_db:.2f} dB",
+            "current_level_db": f"{self.current_level_db:.2f} dB" if self.current_level_db is not None else "Waiting...",
             "current_fader_db": f"{self.current_fader_db:.2f} dB",
             "target_level_db": f"{self.TARGET_LEVEL_DB:.2f} dB",
             "kp": self.KP,

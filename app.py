@@ -47,7 +47,7 @@ def meter():
     Returns only level and fader dB values for high-frequency polling.
     """
     return jsonify({
-        "level_db": round(mixer_manager.current_level_db, 2),
+        "level_db": round(mixer_manager.current_level_db, 2) if mixer_manager.current_level_db is not None else None,
         "fader_db": round(mixer_manager.current_fader_db, 2)
     })
 
