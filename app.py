@@ -179,6 +179,27 @@ def set_livestream_bus():
         return jsonify({"error": f"Invalid bus ID: {e}. Expected 'bus_id' as string or int."}), 400
 
 
+@app.route('/history')
+def history():
+    """
+    Returns the level history buffer for the history chart.
+    """
+    return jsonify(list(mixer_manager._level_history))
+
+@app.route('/set_auto_start', methods=['POST'])
+def set_auto_start():
+    """
+    Enable or disable auto-start on boot.
+    Expects JSON: {'enabled': true/false}
+    """
+    data = request.get_json()
+    try:
+        enabled = bool(data['enabled'])
+        mixer_manager.set_auto_start(enabled)
+        return jsonify({"message": f"Auto-start {'enabled' if enabled else 'disabled'}.", "status": mixer_manager.get_status()})
+    except (TypeError, KeyError) as e:
+        return jsonify({"error": f"Invalid request: {e}. Expected 'enabled' as boolean."}), 400
+
 @app.route('/set_fader', methods=['POST'])
 def set_fader():
     """
@@ -197,4 +218,7 @@ def set_fader():
 
 
 if __name__ == '__main__':
+    if mixer_manager.auto_start:
+        logging.info("Auto-start enabled — starting monitoring on launch")
+        mixer_manager.start_monitoring()
     app.run(host='0.0.0.0', port=5000)

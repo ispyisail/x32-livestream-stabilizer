@@ -115,6 +115,15 @@
         .bus-select-group {
             margin-top: 8px;
         }
+        .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #999;
+            vertical-align: middle;
+        }
+
         .bus-select-group select {
             width: 100%;
             padding: 8px;
@@ -148,7 +157,14 @@
                     </div>
                 </div>
                 <div class="status-item"><strong>Connection:</strong> <span id="connected">N/A</span></div>
-                <div class="status-item"><strong>Overall Status:</strong> <span id="overall_status">N/A</span></div>
+                <div class="status-item"><strong>Overall Status:</strong> <span id="overall_status"><span id="status_dot" class="status-dot"></span> <span id="status_text">N/A</span></span></div>
+                <div style="font-size:0.75em; color:#666; margin: 2px 0 4px 0;">
+                    <span class="status-dot" style="background:#999;"></span> Stopped
+                    &nbsp;<span class="status-dot" style="background:#FFC107;"></span> Connecting
+                    &nbsp;<span class="status-dot" style="background:#4CAF50;"></span> Monitoring
+                    &nbsp;<span class="status-dot" style="background:#2196F3;"></span> Silence
+                    &nbsp;<span class="status-dot" style="background:#F44336;"></span> Error
+                </div>
                 <hr>
                 <div class="level-meter-display">
                     <div class="meter-column">
@@ -186,6 +202,10 @@
                     &nbsp;<span style="color:red;">&#9632;</span> Clipping (0 dB+)
                 </div>
                 <div class="status-item"><strong>Target Level:</strong> <span id="target_level">N/A</span></div>
+                <div style="margin-top:10px;">
+                    <strong style="font-size:0.85em;">Level History (60s)</strong>
+                    <canvas id="history_chart" width="400" height="180" style="width:100%;height:180px;background:#1a1a2e;border-radius:4px;margin-top:4px;"></canvas>
+                </div>
             </div>
 
             <div class="control-box">
@@ -194,6 +214,10 @@
                     <button class="start" onclick="controlMonitor('/start_monitor')">Start Monitoring</button>
                     <button class="stop" onclick="controlMonitor('/stop_monitor')">Stop Monitoring</button>
                 </div>
+                <label style="display:flex;align-items:center;gap:6px;margin-bottom:10px;cursor:pointer;">
+                    <input type="checkbox" id="auto_start_toggle" onchange="setAutoStart(this.checked)">
+                    <span>Auto-start on boot</span>
+                </label>
 
                 <hr>
 
@@ -286,7 +310,9 @@
                 }
 
                 document.getElementById('connected').textContent = data.connected ? 'Yes' : 'No';
-                document.getElementById('overall_status').textContent = data.status_message;
+                document.getElementById('status_text').textContent = data.status_message;
+                const dotColors = {stopped:'#999', connecting:'#FFC107', reconnecting:'#FFC107', monitoring:'#4CAF50', silence:'#2196F3', error:'#F44336'};
+                document.getElementById('status_dot').style.backgroundColor = dotColors[data.stabilizer_state] || '#999';
 
                 const currentLevel = parseFloat(data.current_level_db);
                 const currentFader = parseFloat(data.current_fader_db);
@@ -297,6 +323,12 @@
                 document.getElementById('current_fader').textContent = isNaN(currentFader) ? 'N/A' : `${currentFader.toFixed(2)} dB`;
                 document.getElementById('target_level').textContent = data.target_level_db;
                 document.getElementById('target_level_current').textContent = data.target_level_db;
+
+                // Sync auto-start checkbox
+                const autoStartCb = document.getElementById('auto_start_toggle');
+                if (document.activeElement !== autoStartCb) {
+                    autoStartCb.checked = data.auto_start;
+                }
 
                 document.getElementById('slew_val').textContent = data.slew_rate;
                 document.getElementById('smooth_val').textContent = data.smoothing;
@@ -441,6 +473,24 @@
             }
         }
 
+        async function setAutoStart(enabled) {
+            try {
+                const response = await fetch('/set_auto_start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: enabled })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    showMessage(data.message, 'success');
+                } else {
+                    showMessage('Error: ' + (data.error || data.message), 'error');
+                }
+            } catch (error) {
+                showMessage('Failed to set auto-start: ' + error.message, 'error');
+            }
+        }
+
         async function onBusSelectChange() {
             const select = document.getElementById('bus_select');
             let busId = select.value;
@@ -487,12 +537,110 @@
             }
         }
 
+        // History chart drawing
+        let historyData = [];
+        async function fetchHistory() {
+            try {
+                const response = await fetch('/history');
+                historyData = await response.json();
+                drawHistoryChart();
+            } catch (e) {}
+        }
+
+        function drawHistoryChart() {
+            const canvas = document.getElementById('history_chart');
+            const ctx = canvas.getContext('2d');
+            const W = canvas.width, H = canvas.height;
+            const PAD_L = 40, PAD_R = 10, PAD_T = 10, PAD_B = 22;
+            const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+            const DB_MIN = -60, DB_MAX = 6;
+
+            ctx.clearRect(0, 0, W, H);
+
+            // Background
+            ctx.fillStyle = '#1a1a2e';
+            ctx.fillRect(0, 0, W, H);
+
+            // Y-axis labels and grid
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'right';
+            const yTicks = [6, 0, -6, -12, -24, -48, -60];
+            for (const db of yTicks) {
+                const y = PAD_T + plotH * (1 - (db - DB_MIN) / (DB_MAX - DB_MIN));
+                ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+                ctx.beginPath(); ctx.moveTo(PAD_L, y); ctx.lineTo(PAD_L + plotW, y); ctx.stroke();
+                ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                ctx.fillText(db + '', PAD_L - 4, y + 3);
+            }
+
+            // Time labels on bottom (always visible)
+            ctx.fillStyle = 'rgba(255,255,255,0.4)';
+            ctx.textAlign = 'center';
+            ctx.font = '9px Arial';
+            for (let s = 0; s <= 60; s += 15) {
+                const x = PAD_L + plotW * (s / 60);
+                ctx.fillText(s === 0 ? '-60s' : s === 60 ? 'now' : `-${60 - s}s`, x, H - 4);
+            }
+
+            // Legend (always visible)
+            ctx.font = '9px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillStyle = '#4CAF50'; ctx.fillText('Input', PAD_L + 4, PAD_T + 12);
+            ctx.fillStyle = '#2196F3'; ctx.fillText('Fader', PAD_L + 40, PAD_T + 12);
+            ctx.fillStyle = 'rgba(255,255,0,0.6)'; ctx.fillText('Target', PAD_L + 76, PAD_T + 12);
+
+            if (historyData.length < 2) {
+                ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                ctx.textAlign = 'center';
+                ctx.font = '13px Arial';
+                ctx.fillText('Start monitoring to see history', W / 2, H / 2 + 5);
+                return;
+            }
+
+            const now = historyData[historyData.length - 1].t;
+            const tMin = now - 60;
+
+            // Target level dashed line
+            const statusTargetEl = document.getElementById('target_level');
+            const targetDb = parseFloat(statusTargetEl.textContent);
+            if (!isNaN(targetDb) && targetDb >= DB_MIN && targetDb <= DB_MAX) {
+                const ty = PAD_T + plotH * (1 - (targetDb - DB_MIN) / (DB_MAX - DB_MIN));
+                ctx.setLineDash([4, 4]);
+                ctx.strokeStyle = 'rgba(255,255,0,0.5)';
+                ctx.lineWidth = 1;
+                ctx.beginPath(); ctx.moveTo(PAD_L, ty); ctx.lineTo(PAD_L + plotW, ty); ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            function drawLine(key, color) {
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                let started = false;
+                for (const pt of historyData) {
+                    if (pt.t < tMin) continue;
+                    const x = PAD_L + plotW * ((pt.t - tMin) / 60);
+                    const db = Math.max(DB_MIN, Math.min(DB_MAX, pt[key]));
+                    const y = PAD_T + plotH * (1 - (db - DB_MIN) / (DB_MAX - DB_MIN));
+                    if (!started) { ctx.moveTo(x, y); started = true; }
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+            }
+
+            drawLine('level', '#4CAF50');
+            drawLine('fader', '#2196F3');
+        }
+
         // Fast meter poll at 200ms (5 Hz)
         setInterval(fetchMeter, 200);
         // Full status poll at 2s (PID values, connection, etc.)
         setInterval(fetchStatus, 2000);
+        // History chart poll at 1s
+        setInterval(fetchHistory, 1000);
         // Initial fetch
         fetchStatus();
+        fetchHistory();
     </script>
 </body>
 </html>

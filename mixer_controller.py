@@ -6,6 +6,7 @@ import threading
 import json
 import os
 import time
+from collections import deque
 
 from behringer_mixer import mixer_api
 
@@ -292,6 +293,9 @@ class MixerStateManager:
         self._initial_fader_db = None  # saved on monitor start for restore
         self._manual_override_until = 0  # timestamp: PID paused until this time
         self._in_silence = False  # True when signal is below threshold; fader frozen
+        self._stabilizer_state = "stopped"  # one of: stopped, connecting, reconnecting, monitoring, silence, error
+        self.auto_start = False
+        self._level_history = deque(maxlen=300)  # 60s at ~5Hz
 
         # Load saved settings from config file (overrides defaults above)
         self._load_config()
@@ -308,6 +312,7 @@ class MixerStateManager:
                 self.MAX_FADER_SLEW_DB = cfg.get("slew_rate", self.MAX_FADER_SLEW_DB)
                 self.METER_SMOOTHING = cfg.get("smoothing", self.METER_SMOOTHING)
                 self.SIGNAL_THRESHOLD_DB = cfg.get("silence_threshold", self.SIGNAL_THRESHOLD_DB)
+                self.auto_start = cfg.get("auto_start", self.auto_start)
                 logging.info(f"Loaded settings from {self._config_file}")
         except Exception as e:
             logging.warning(f"Could not load config: {e}, using defaults")
@@ -321,6 +326,7 @@ class MixerStateManager:
             "slew_rate": self.MAX_FADER_SLEW_DB,
             "smoothing": self.METER_SMOOTHING,
             "silence_threshold": self.SIGNAL_THRESHOLD_DB,
+            "auto_start": self.auto_start,
         }
         try:
             with open(self._config_file, 'w') as f:
@@ -365,6 +371,7 @@ class MixerStateManager:
                 if connected:
                     logging.info("Successfully connected to the mixer.")
                     self.mixer_connected = True
+                    self._stabilizer_state = "monitoring"
                     self.status_message = "Connected and running"
                     return True
                 else:
@@ -377,6 +384,7 @@ class MixerStateManager:
                 await asyncio.sleep(self.RETRY_DELAY_SECONDS)
 
         logging.critical(f"Failed to connect to mixer after {self.MAX_RETRY_ATTEMPTS} attempts.")
+        self._stabilizer_state = "error"
         self.status_message = "Failed to connect"
         return False
 
@@ -445,6 +453,7 @@ class MixerStateManager:
 
         except Exception as e:
             logging.error(f"Error during PID setup or subscription: {e}")
+            self._stabilizer_state = "error"
             self.status_message = "Error during monitoring setup"
             return
 
@@ -454,6 +463,14 @@ class MixerStateManager:
                 fader_val = self._mixer.state(self._target_fader_key)
                 if fader_val is not None:
                     self.current_fader_db = fader_val
+
+                # Record history for graph
+                if self.current_level_db is not None:
+                    self._level_history.append({
+                        "t": time.time(),
+                        "level": round(self.current_level_db, 2),
+                        "fader": round(self.current_fader_db, 2),
+                    })
 
                 # Skip PID until real meter data has arrived
                 if self.current_level_db is None:
@@ -471,6 +488,7 @@ class MixerStateManager:
                     if not self._in_silence:
                         logging.info(f"Signal dropped below threshold ({self.current_level_db:.1f} dB), freezing fader at {self.current_fader_db:.1f} dB")
                         self._in_silence = True
+                        self._stabilizer_state = "silence"
                     await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
                     continue
 
@@ -478,6 +496,7 @@ class MixerStateManager:
                 if self._in_silence:
                     logging.info(f"Signal returned ({self.current_level_db:.1f} dB), resuming fader control")
                     self._in_silence = False
+                    self._stabilizer_state = "monitoring"
                     self._smoothed_level_db = self.current_level_db
 
                 # Smooth the meter reading to reduce noise-driven jitter
@@ -506,6 +525,7 @@ class MixerStateManager:
 
             except Exception as e:
                 logging.error(f"Error in monitoring loop: {e}")
+                self._stabilizer_state = "error"
                 self.status_message = f"Error: {e}"
 
             await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
@@ -514,6 +534,14 @@ class MixerStateManager:
 
     async def _cleanup_mixer(self):
         """Clean up mixer connection and reset state."""
+        # Restore fader to initial position before closing transport
+        if self._initial_fader_db is not None and self._meter_transport and self._fader_osc_address:
+            try:
+                self._send_fader_osc(self._initial_fader_db)
+                logging.info(f"Fader restored to {self._initial_fader_db:.2f} dB")
+            except Exception as e:
+                logging.warning(f"Failed to restore fader: {e}")
+            self._initial_fader_db = None
         try:
             if self._meter_keepalive_task and not self._meter_keepalive_task.done():
                 self._meter_keepalive_task.cancel()
@@ -534,6 +562,7 @@ class MixerStateManager:
         self.mixer_connected = False
         self.current_level_db = None
         self._smoothed_level_db = None
+        self._level_history.clear()
 
     async def _run_mixer_loop_async(self):
         """
@@ -558,6 +587,7 @@ class MixerStateManager:
                 break
 
             # Connection lost or failed — wait and retry
+            self._stabilizer_state = "reconnecting"
             self.status_message = f"Reconnecting in {RECONNECT_DELAY}s..."
             logging.info(f"Will attempt to reconnect in {RECONNECT_DELAY} seconds...")
             for _ in range(RECONNECT_DELAY):
@@ -585,6 +615,7 @@ class MixerStateManager:
             return
 
         self._stop_event.clear()
+        self._stabilizer_state = "connecting"
         self._thread = threading.Thread(target=self._start_mixer_thread, daemon=True)
         self._thread.start()
         self.status_message = "Attempting to start monitoring"
@@ -603,6 +634,7 @@ class MixerStateManager:
                 logging.info("Mixer monitoring thread stopped.")
         else:
             logging.info("Mixer monitoring not running.")
+        self._stabilizer_state = "stopped"
         self.status_message = "Stopped"
 
     def get_all_settings(self):
@@ -716,6 +748,7 @@ class MixerStateManager:
         """
         return {
             "connected": self.mixer_connected,
+            "stabilizer_state": self._stabilizer_state,
             "status_message": self.status_message,
             "current_level_db": f"{self.current_level_db:.2f} dB" if self.current_level_db is not None else "Waiting...",
             "current_fader_db": f"{self.current_fader_db:.2f} dB",
@@ -725,8 +758,15 @@ class MixerStateManager:
             "silence_threshold": self.SIGNAL_THRESHOLD_DB,
             "livestream_bus": self.LIVESTREAM_BUS_NUMBER,
             "mixer_ip": self.MIXER_IP,
-            "suggested_livestream_output": self.suggested_livestream_output
+            "suggested_livestream_output": self.suggested_livestream_output,
+            "auto_start": self.auto_start,
         }
+
+    def set_auto_start(self, enabled):
+        """Enable or disable auto-start on boot."""
+        self.auto_start = bool(enabled)
+        self._save_config()
+        logging.info(f"Auto-start {'enabled' if self.auto_start else 'disabled'}")
 
     def set_tuning(self, slew_rate, smoothing, silence_threshold):
         self.MAX_FADER_SLEW_DB = slew_rate
