@@ -12,7 +12,6 @@ Uses a feedforward control loop with configurable slew rate and meter smoothing 
 - **Runtime tuning** — adjust target level, slew rate, meter smoothing, and silence threshold without restarting
 - **Silence detection** — freezes the fader when signal drops below a threshold to avoid boosting noise
 - **Mixer IP configuration** — set the X32's IP address from the web UI
-- **Settings backup** — save a snapshot of mixer settings (channels, buses, matrices) to JSON
 
 ## Prerequisites
 
@@ -196,7 +195,6 @@ All endpoints return JSON.
 | `POST` | `/set_mixer_ip` | Set mixer IP. Body: `{"ip": "192.168.1.10"}` |
 | `POST` | `/set_livestream_bus` | Set monitored output. Body: `{"bus_id": "mtx1"}` |
 | `POST` | `/set_fader` | Manually set fader (pauses auto-control for 5s). Body: `{"fader_db": -10.0}` |
-| `POST` | `/backup_settings` | Save mixer settings snapshot to JSON file |
 | `POST` | `/analyze_routing` | Analyze mixer routing and suggest livestream outputs |
 
 ## License

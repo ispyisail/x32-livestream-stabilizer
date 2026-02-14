@@ -105,31 +105,6 @@ def set_target_level():
     except (TypeError, KeyError, ValueError) as e:
         return jsonify({"error": f"Invalid target level: {e}. Expected target_level_db as float."}), 400
 
-@app.route('/backup_settings', methods=['POST'])
-def backup_settings():
-    """
-    Triggers the backup of mixer settings to a JSON file.
-    Now synchronous since get_all_settings() reads from local state cache.
-    """
-    if not mixer_manager.mixer_connected or not mixer_manager._thread or not mixer_manager._thread.is_alive():
-        return jsonify({"error": "Mixer not connected or monitoring not active to perform backup."}), 400
-
-    try:
-        settings_data = mixer_manager.get_all_settings()
-
-        if "error" in settings_data:
-            return jsonify({"error": f"Failed to retrieve settings: {settings_data['error']}"}), 500
-
-        save_result = mixer_manager.save_settings_to_file(settings_data)
-        if "error" in save_result:
-            return jsonify({"error": f"Failed to save settings: {save_result['error']}"}), 500
-
-        return jsonify({"message": f"Mixer settings backed up successfully. {save_result['message']}"}), 200
-
-    except Exception as e:
-        logging.error(f"Error during backup operation: {e}")
-        return jsonify({"error": f"An unexpected error occurred during backup: {e}"}), 500
-
 @app.route('/analyze_routing', methods=['POST'])
 def analyze_routing():
     """

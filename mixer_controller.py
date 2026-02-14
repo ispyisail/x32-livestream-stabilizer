@@ -6,7 +6,7 @@ import threading
 import json
 import os
 import time
-from datetime import datetime
+
 from behringer_mixer import mixer_api
 
 
@@ -240,7 +240,6 @@ class MixerStateManager:
         self._loop = None
         self._thread = None
         self._stop_event = threading.Event()
-        self._backup_dir = "mixer_backups"
         self._config_file = "config.json"
 
         # Configuration Parameters for Livestream Stabilizer
@@ -695,27 +694,6 @@ class MixerStateManager:
         logging.info(f"Livestream routing analysis suggestions: {suggestions}")
         self.suggested_livestream_output = suggestions
         return suggestions
-
-
-    def save_settings_to_file(self, settings_data):
-        """
-        Saves the provided settings data to a JSON file with a timestamp.
-        """
-        filename = datetime.now().strftime("x32_settings_backup_%Y%m%d_%H%M%S.json")
-        filepath = f"{self._backup_dir}/{filename}"
-
-        # Ensure backup directory exists
-        import os
-        os.makedirs(self._backup_dir, exist_ok=True)
-
-        try:
-            with open(filepath, 'w') as f:
-                json.dump(settings_data, f, indent=4)
-            logging.info(f"Mixer settings saved to {filepath}")
-            return {"message": f"Settings saved to {filepath}"}
-        except Exception as e:
-            logging.error(f"Error saving settings to file: {e}")
-            return {"error": f"Error saving settings: {e}"}
 
 
     def get_status(self):

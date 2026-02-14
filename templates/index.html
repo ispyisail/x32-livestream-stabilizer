@@ -227,13 +227,6 @@
                 <button onclick="setStabilizerTuning()">Apply Tuning</button>
                 <p><strong>Current:</strong> Slew: <span id="slew_val">N/A</span> dB | Smooth: <span id="smooth_val">N/A</span> | Threshold: <span id="threshold_val">N/A</span> dB</p>
 
-                <hr>
-
-                <h2>Utilities</h2>
-                <div class="input-group">
-                    <button onclick="backupSettings()">Backup Mixer Settings</button>
-                    <p><em>Saves a snapshot of current mixer settings to a JSON file.</em></p>
-                </div>
 
             </div>
         </div>
@@ -391,24 +384,6 @@
             } catch (error) {
                 console.error('Error setting tuning:', error);
                 showMessage('Failed to set tuning: ' + error.message, 'error');
-            }
-        }
-
-        async function backupSettings() {
-            try {
-                const response = await fetch('/backup_settings', {
-                    method: 'POST'
-                });
-                const data = await response.json();
-                if (response.ok) {
-                    showMessage(data.message, 'success');
-                } else {
-                    showMessage('Error: ' + (data.error || data.message), 'error');
-                }
-                fetchStatus();
-            } catch (error) {
-                console.error('Error backing up settings:', error);
-                showMessage('Failed to backup settings: ' + error.message, 'error');
             }
         }
 
