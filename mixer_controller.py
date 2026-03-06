@@ -218,7 +218,12 @@ class MeterProtocol(asyncio.DatagramProtocol):
 
             if values:
                 avg_float = sum(values) / len(values)
-                self._manager.current_level_db = meter_float_to_db(avg_float)
+                level_db = meter_float_to_db(avg_float)
+                self._manager.current_level_db = level_db
+                # Only feed above-threshold samples into the averaging buffer
+                # so silence does not pull down the average level
+                if level_db >= self._manager.SIGNAL_THRESHOLD_DB:
+                    self._manager._meter_samples.append((time.time(), level_db))
         except Exception as e:
             logging.debug(f"Meter parse error: {e}")
 
@@ -247,14 +252,9 @@ class MixerStateManager:
         self.MIXER_IP = "192.168.150.10"
         self.LIVESTREAM_BUS_NUMBER = "mtx1"
 
-        self.TARGET_LEVEL_DB = -30.0     # Desired output level in dB (output = input + fader)
+        self.TARGET_LEVEL_DB = -42.0     # Desired output level in dB (output = input + fader)
 
-        # PID Controller Parameters (These will need tuning!)
-        self.KP = 0.2  # Proportional gain (lower = less aggressive)
-        self.KI = 0.02 # Integral gain (slowly corrects steady-state error)
-        self.KD = 0.01 # Derivative gain (dampens oscillation)
-
-        # How often to check and adjust the level (also the PID sample time)
+        # How often to check and adjust the level
         self.ADJUSTMENT_INTERVAL_SECONDS = 0.5
 
         # Minimum and Maximum fader values in dB for safety
@@ -262,17 +262,20 @@ class MixerStateManager:
         self.MAX_FADER_DB = 10.0  # Max output
 
         # Signal threshold: don't adjust fader if meter level is below this
-        # (prevents PID from reacting to noise floor / silence)
-        self.SIGNAL_THRESHOLD_DB = -60.0
+        # (prevents reacting to noise floor / silence)
+        self.SIGNAL_THRESHOLD_DB = -50.0
 
         # Slew rate: max dB the fader can move per adjustment cycle
         # Prevents sudden jumps; lower = smoother. At 0.5s interval, 2.0 means max 4 dB/sec.
-        self.MAX_FADER_SLEW_DB = 2.0
+        self.MAX_FADER_SLEW_DB = 0.5
 
-        # Meter smoothing: exponential moving average factor (0-1)
-        # Lower = smoother but slower to react. 0.15 = 85% old + 15% new each sample.
-        self.METER_SMOOTHING = 0.15
         self._smoothed_level_db = None
+
+        # Averaging window: collect meter readings over this many seconds
+        # and use their average for fader decisions. Prevents fast jumping.
+        self.AVERAGING_WINDOW_SECONDS = 10.0
+        self._meter_samples = deque(maxlen=3000)  # (timestamp, level_db), capped at ~5 min of data at 10Hz
+        self._last_avg_time = 0  # timestamp of last average computation
 
         # Connection retry parameters
         self.MAX_RETRY_ATTEMPTS = 5
@@ -291,10 +294,12 @@ class MixerStateManager:
         self._meter_keepalive_task = None
         self._fader_osc_address = None
         self._initial_fader_db = None  # saved on monitor start for restore
-        self._manual_override_until = 0  # timestamp: PID paused until this time
+        self._manual_override_until = 0  # timestamp: auto-control paused until this time
         self._in_silence = False  # True when signal is below threshold; fader frozen
+        self._silence_count = 0   # consecutive below-threshold readings for debounce
+        self.SILENCE_DEBOUNCE = 6  # require 6 consecutive readings (~3s) before declaring silence
         self._stabilizer_state = "stopped"  # one of: stopped, connecting, reconnecting, monitoring, silence, error
-        self.auto_start = False
+        self.auto_start = True
         self._level_history = deque(maxlen=300)  # 60s at ~5Hz
 
         # Load saved settings from config file (overrides defaults above)
@@ -310,8 +315,8 @@ class MixerStateManager:
                 self.LIVESTREAM_BUS_NUMBER = cfg.get("livestream_bus", self.LIVESTREAM_BUS_NUMBER)
                 self.TARGET_LEVEL_DB = cfg.get("target_level_db", self.TARGET_LEVEL_DB)
                 self.MAX_FADER_SLEW_DB = cfg.get("slew_rate", self.MAX_FADER_SLEW_DB)
-                self.METER_SMOOTHING = cfg.get("smoothing", self.METER_SMOOTHING)
                 self.SIGNAL_THRESHOLD_DB = cfg.get("silence_threshold", self.SIGNAL_THRESHOLD_DB)
+                self.AVERAGING_WINDOW_SECONDS = cfg.get("averaging_window", self.AVERAGING_WINDOW_SECONDS)
                 self.auto_start = cfg.get("auto_start", self.auto_start)
                 logging.info(f"Loaded settings from {self._config_file}")
         except Exception as e:
@@ -324,8 +329,8 @@ class MixerStateManager:
             "livestream_bus": self.LIVESTREAM_BUS_NUMBER,
             "target_level_db": self.TARGET_LEVEL_DB,
             "slew_rate": self.MAX_FADER_SLEW_DB,
-            "smoothing": self.METER_SMOOTHING,
             "silence_threshold": self.SIGNAL_THRESHOLD_DB,
+            "averaging_window": self.AVERAGING_WINDOW_SECONDS,
             "auto_start": self.auto_start,
         }
         try:
@@ -390,8 +395,8 @@ class MixerStateManager:
 
     async def _monitor_livestream_level_async(self):
         """
-        Monitors the livestream output level and adjusts the fader to maintain a target level
-        using a PID controller (async version).
+        Monitors the livestream output level and adjusts the fader to maintain a target level.
+        Uses a feedforward controller: fader = target - averaged_input.
         """
         if not self.mixer_connected or not self._mixer:
             logging.error("Mixer not connected. Cannot start monitoring.")
@@ -452,7 +457,7 @@ class MixerStateManager:
             logging.info("Meter UDP subscription started.")
 
         except Exception as e:
-            logging.error(f"Error during PID setup or subscription: {e}")
+            logging.error(f"Error during monitoring setup: {e}")
             self._stabilizer_state = "error"
             self.status_message = "Error during monitoring setup"
             return
@@ -472,7 +477,7 @@ class MixerStateManager:
                         "fader": round(self.current_fader_db, 2),
                     })
 
-                # Skip PID until real meter data has arrived
+                # Skip until real meter data has arrived
                 if self.current_level_db is None:
                     logging.info("Waiting for meter data...")
                     await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
@@ -483,43 +488,54 @@ class MixerStateManager:
                     await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
                     continue
 
-                # Check for silence using RAW level (not smoothed) for fast detection
+                # Silence detection with debounce — require multiple consecutive
+                # below-threshold readings before freezing the fader.
+                # This prevents momentary dips from wiping the averaging buffer.
                 if self.current_level_db < self.SIGNAL_THRESHOLD_DB:
-                    if not self._in_silence:
-                        logging.info(f"Signal dropped below threshold ({self.current_level_db:.1f} dB), freezing fader at {self.current_fader_db:.1f} dB")
+                    self._silence_count += 1
+                    if self._silence_count >= self.SILENCE_DEBOUNCE and not self._in_silence:
+                        logging.info(f"Signal below threshold for {self._silence_count} cycles ({self.current_level_db:.1f} dB), freezing fader at {self.current_fader_db:.1f} dB")
                         self._in_silence = True
                         self._stabilizer_state = "silence"
+                    if self._in_silence:
+                        await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
+                        continue
+                else:
+                    self._silence_count = 0
+                    if self._in_silence:
+                        logging.info(f"Signal returned ({self.current_level_db:.1f} dB), resuming fader control")
+                        self._in_silence = False
+                        self._stabilizer_state = "monitoring"
+
+                # Only compute average and adjust fader once per averaging window
+                now = time.time()
+                if now - self._last_avg_time < self.AVERAGING_WINDOW_SECONDS:
                     await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
                     continue
 
-                # Coming out of silence: re-seed the smoothed level before moving fader
-                if self._in_silence:
-                    logging.info(f"Signal returned ({self.current_level_db:.1f} dB), resuming fader control")
-                    self._in_silence = False
-                    self._stabilizer_state = "monitoring"
-                    self._smoothed_level_db = self.current_level_db
+                # Trim samples older than the averaging window
+                cutoff = now - self.AVERAGING_WINDOW_SECONDS
+                while self._meter_samples and self._meter_samples[0][0] < cutoff:
+                    self._meter_samples.popleft()
+                if not self._meter_samples:
+                    await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
+                    continue
 
-                # Smooth the meter reading to reduce noise-driven jitter
-                if self._smoothed_level_db is None:
-                    self._smoothed_level_db = self.current_level_db
-                else:
-                    alpha = self.METER_SMOOTHING
-                    self._smoothed_level_db = alpha * self.current_level_db + (1 - alpha) * self._smoothed_level_db
+                # Average in linear amplitude space (not dB) for correct audio averaging
+                linear_values = [10.0 ** (s[1] / 20.0) for s in self._meter_samples]
+                avg_linear = sum(linear_values) / len(linear_values)
+                avg_level_db = 20.0 * math.log10(avg_linear) if avg_linear > 0 else -90.0
+                self._smoothed_level_db = avg_level_db
+                self._last_avg_time = now
 
                 # Feedforward: fader = target_output - input_level
-                desired_fader_db = self.TARGET_LEVEL_DB - self._smoothed_level_db
+                desired_fader_db = self.TARGET_LEVEL_DB - avg_level_db
                 desired_fader_db = max(self.MIN_FADER_DB, min(self.MAX_FADER_DB, desired_fader_db))
 
-                # Apply slew rate limit: cap how much fader moves per cycle
-                fader_delta = desired_fader_db - self.current_fader_db
-                if abs(fader_delta) > self.MAX_FADER_SLEW_DB:
-                    desired_fader_db = self.current_fader_db + self.MAX_FADER_SLEW_DB * (1 if fader_delta > 0 else -1)
+                logging.info(f"Monitor - Avg({len(self._meter_samples)} samples/{self.AVERAGING_WINDOW_SECONDS}s): {avg_level_db:.1f} dB, Raw: {self.current_level_db:.1f} dB, Target: {self.TARGET_LEVEL_DB:.1f} dB, Fader: {self.current_fader_db:.1f} -> {desired_fader_db:.1f} dB")
 
-                est_output = self._smoothed_level_db + desired_fader_db
-                logging.info(f"Monitor - Input: {self._smoothed_level_db:.1f} dB, Target: {self.TARGET_LEVEL_DB:.1f} dB, Fader: {self.current_fader_db:.1f} -> {desired_fader_db:.1f} dB, Est.Output: {est_output:.1f} dB")
-
-                # Only move fader if change is significant (deadband)
-                if abs(desired_fader_db - self.current_fader_db) > 0.5:
+                # Only move fader if change is significant (1 dB deadband)
+                if abs(desired_fader_db - self.current_fader_db) > 1.0:
                     self._send_fader_osc(desired_fader_db)
                     self.current_fader_db = desired_fader_db
 
@@ -562,6 +578,8 @@ class MixerStateManager:
         self.mixer_connected = False
         self.current_level_db = None
         self._smoothed_level_db = None
+        self._meter_samples.clear()
+        self._last_avg_time = 0
         self._level_history.clear()
 
     async def _run_mixer_loop_async(self):
@@ -742,6 +760,17 @@ class MixerStateManager:
         return suggestions
 
 
+    def get_averaged_level(self):
+        """
+        Returns the last computed average level and sample count.
+        The average is only recalculated once per averaging window in the
+        control loop, so this value stays stable between updates.
+        Returns (avg_db, sample_count) or (None, 0).
+        """
+        if self._smoothed_level_db is None:
+            return None, 0
+        return self._smoothed_level_db, len(self._meter_samples)
+
     def get_status(self):
         """
         Returns a dictionary of the current mixer status.
@@ -754,8 +783,8 @@ class MixerStateManager:
             "current_fader_db": f"{self.current_fader_db:.2f} dB",
             "target_level_db": f"{self.TARGET_LEVEL_DB:.2f} dB",
             "slew_rate": self.MAX_FADER_SLEW_DB,
-            "smoothing": self.METER_SMOOTHING,
             "silence_threshold": self.SIGNAL_THRESHOLD_DB,
+            "averaging_window": self.AVERAGING_WINDOW_SECONDS,
             "livestream_bus": self.LIVESTREAM_BUS_NUMBER,
             "mixer_ip": self.MIXER_IP,
             "suggested_livestream_output": self.suggested_livestream_output,
@@ -768,22 +797,22 @@ class MixerStateManager:
         self._save_config()
         logging.info(f"Auto-start {'enabled' if self.auto_start else 'disabled'}")
 
-    def set_tuning(self, slew_rate, smoothing, silence_threshold):
+    def set_tuning(self, slew_rate, silence_threshold, averaging_window):
         self.MAX_FADER_SLEW_DB = slew_rate
-        self.METER_SMOOTHING = smoothing
         self.SIGNAL_THRESHOLD_DB = silence_threshold
+        self.AVERAGING_WINDOW_SECONDS = averaging_window
         self._save_config()
-        logging.info(f"Stabilizer tuning updated: slew={slew_rate}, smoothing={smoothing}, threshold={silence_threshold}")
+        logging.info(f"Stabilizer tuning updated: slew={slew_rate}, threshold={silence_threshold}, avg_window={averaging_window}s")
 
     def set_target_level(self, target_level_db):
         self.TARGET_LEVEL_DB = target_level_db
         self._save_config()
-        logging.info(f"Target level updated to {target_level_db} dB. Restart monitoring for changes to take effect.")
+        logging.info(f"Target level updated to {target_level_db} dB.")
 
     def set_fader_level(self, fader_db):
         """
         Manually set the monitored fader to a specific dB value.
-        Pauses PID control for 5 seconds so it doesn't immediately override.
+        Pauses auto-control for 5 seconds so it doesn't immediately override.
         """
         fader_db = max(self.MIN_FADER_DB, min(self.MAX_FADER_DB, fader_db))
         if not self.mixer_connected or not self._meter_transport:
@@ -793,7 +822,7 @@ class MixerStateManager:
             self._send_fader_osc(fader_db)
             self.current_fader_db = fader_db
             self._manual_override_until = time.time() + 5
-            logging.info(f"Manually set fader to {fader_db:.2f} dB (PID paused 5s)")
+            logging.info(f"Manually set fader to {fader_db:.2f} dB (auto-control paused 5s)")
             return True
         except Exception as e:
             logging.error(f"Error setting fader: {e}")
@@ -803,10 +832,16 @@ class MixerStateManager:
         """
         Sets the LIVESTREAM_BUS_NUMBER dynamically.
         Accepts: int (bus 1-16), "main_st", "mtx1" through "mtx6"
+        Automatically restarts monitoring if running.
         """
+        was_running = self._thread and self._thread.is_alive()
+        if was_running:
+            self.stop_monitoring()
         self.LIVESTREAM_BUS_NUMBER = bus_id
         self._save_config()
-        logging.info(f"Livestream monitoring bus/matrix set to: {bus_id} (key: {_build_fader_db_key(bus_id)}). Restart monitoring for changes to take effect.")
+        logging.info(f"Livestream monitoring bus/matrix set to: {bus_id} (key: {_build_fader_db_key(bus_id)})")
+        if was_running:
+            self.start_monitoring()
 
     def set_mixer_ip(self, ip):
         """

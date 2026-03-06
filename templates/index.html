@@ -191,6 +191,10 @@
                         <div class="level-value">
                             <strong>Input Level:</strong> <span id="current_level_numeric">N/A</span>
                         </div>
+                        <div class="level-value" style="color:#FF9800;">
+                            <strong>Input Average:</strong> <span id="current_avg_level">N/A</span>
+                            <span id="avg_sample_count" style="font-size:0.7em;color:#999;"></span>
+                        </div>
                         <div class="level-value">
                             <strong>Fader Position:</strong> <span id="current_fader">N/A</span>
                         </div>
@@ -239,17 +243,17 @@
                     <p style="margin:2px 0;color:#666;font-size:0.85em;">Max fader movement per 0.5s. Lower = smoother.</p>
                 </div>
                 <div class="input-group">
-                    <label for="new_smoothing">Meter Smoothing (0.05 - 0.5):</label>
-                    <input type="number" step="0.05" min="0.05" max="0.5" id="new_smoothing" value="0.15">
-                    <p style="margin:2px 0;color:#666;font-size:0.85em;">Noise filter. Lower = smoother but slower to react.</p>
-                </div>
-                <div class="input-group">
                     <label for="new_threshold">Silence Threshold (dB):</label>
                     <input type="number" step="1" min="-90" max="-20" id="new_threshold" value="-60">
                     <p style="margin:2px 0;color:#666;font-size:0.85em;">Below this, fader freezes (silence/between tracks).</p>
                 </div>
+                <div class="input-group">
+                    <label for="new_avg_window">Averaging Window (seconds):</label>
+                    <input type="number" step="1" min="1" max="30" id="new_avg_window" value="5">
+                    <p style="margin:2px 0;color:#666;font-size:0.85em;">Averages level over this many seconds. Higher = more stable, slower to react.</p>
+                </div>
                 <button onclick="setStabilizerTuning()">Apply Tuning</button>
-                <p><strong>Current:</strong> Slew: <span id="slew_val">N/A</span> dB | Smooth: <span id="smooth_val">N/A</span> | Threshold: <span id="threshold_val">N/A</span> dB</p>
+                <p><strong>Current:</strong> Slew: <span id="slew_val">N/A</span> dB | Threshold: <span id="threshold_val">N/A</span> dB | Avg: <span id="avg_window_val">N/A</span>s</p>
 
 
             </div>
@@ -331,8 +335,8 @@
                 }
 
                 document.getElementById('slew_val').textContent = data.slew_rate;
-                document.getElementById('smooth_val').textContent = data.smoothing;
                 document.getElementById('threshold_val').textContent = data.silence_threshold;
+                document.getElementById('avg_window_val').textContent = data.averaging_window;
 
                 if (!isNaN(currentLevel)) {
                     updateSignalMeter(currentLevel);
@@ -398,13 +402,13 @@
 
         async function setStabilizerTuning() {
             const slew = parseFloat(document.getElementById('new_slew').value);
-            const smoothing = parseFloat(document.getElementById('new_smoothing').value);
             const threshold = parseFloat(document.getElementById('new_threshold').value);
+            const avgWindow = parseFloat(document.getElementById('new_avg_window').value);
             try {
                 const response = await fetch('/set_tuning', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ slew_rate: slew, smoothing: smoothing, silence_threshold: threshold })
+                    body: JSON.stringify({ slew_rate: slew, silence_threshold: threshold, averaging_window: avgWindow })
                 });
                 const data = await response.json();
                 if (response.ok) {
@@ -522,11 +526,20 @@
                 const data = await response.json();
                 const level = data.level_db;
                 const fader = data.fader_db;
+                const avgLevel = data.avg_level_db;
                 if (level !== null && level !== undefined) {
                     document.getElementById('current_level_numeric').textContent = `${level.toFixed(2)} dB`;
                     updateSignalMeter(level);
                 } else {
                     document.getElementById('current_level_numeric').textContent = 'Waiting...';
+                }
+                const avgSamples = data.avg_samples;
+                if (avgLevel !== null && avgLevel !== undefined) {
+                    document.getElementById('current_avg_level').textContent = `${avgLevel.toFixed(2)} dB`;
+                    document.getElementById('avg_sample_count').textContent = `(${avgSamples} samples)`;
+                } else {
+                    document.getElementById('current_avg_level').textContent = 'Waiting...';
+                    document.getElementById('avg_sample_count').textContent = '';
                 }
                 if (fader !== null && fader !== undefined) {
                     document.getElementById('current_fader').textContent = `${fader.toFixed(2)} dB`;
@@ -585,9 +598,9 @@
             // Legend (always visible)
             ctx.font = '9px Arial';
             ctx.textAlign = 'left';
-            ctx.fillStyle = '#4CAF50'; ctx.fillText('Input', PAD_L + 4, PAD_T + 12);
-            ctx.fillStyle = '#2196F3'; ctx.fillText('Fader', PAD_L + 40, PAD_T + 12);
-            ctx.fillStyle = 'rgba(255,255,0,0.6)'; ctx.fillText('Target', PAD_L + 76, PAD_T + 12);
+            ctx.fillStyle = '#FF9800'; ctx.fillText('Output', PAD_L + 4, PAD_T + 12);
+            ctx.fillStyle = '#2196F3'; ctx.fillText('Fader', PAD_L + 48, PAD_T + 12);
+            ctx.fillStyle = 'rgba(255,255,0,0.6)'; ctx.fillText('Target', PAD_L + 88, PAD_T + 12);
 
             if (historyData.length < 2) {
                 ctx.fillStyle = 'rgba(255,255,255,0.5)';
@@ -628,7 +641,23 @@
                 ctx.stroke();
             }
 
-            drawLine('level', '#4CAF50');
+            function drawOutputLine(color) {
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                let started = false;
+                for (const pt of historyData) {
+                    if (pt.t < tMin) continue;
+                    const x = PAD_L + plotW * ((pt.t - tMin) / 60);
+                    const db = Math.max(DB_MIN, Math.min(DB_MAX, pt.level + pt.fader));
+                    const y = PAD_T + plotH * (1 - (db - DB_MIN) / (DB_MAX - DB_MIN));
+                    if (!started) { ctx.moveTo(x, y); started = true; }
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+            }
+
+            drawOutputLine('#FF9800');
             drawLine('fader', '#2196F3');
         }
 

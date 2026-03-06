@@ -46,9 +46,12 @@ def meter():
     Fast lightweight endpoint for real-time meter data.
     Returns only level and fader dB values for high-frequency polling.
     """
+    avg_db, sample_count = mixer_manager.get_averaged_level()
     return jsonify({
         "level_db": round(mixer_manager.current_level_db, 2) if mixer_manager.current_level_db is not None else None,
-        "fader_db": round(mixer_manager.current_fader_db, 2)
+        "fader_db": round(mixer_manager.current_fader_db, 2),
+        "avg_level_db": round(avg_db, 2) if avg_db is not None else None,
+        "avg_samples": sample_count
     })
 
 @app.route('/start_monitor', methods=['POST'])
@@ -75,18 +78,18 @@ def stop_monitor():
 def set_tuning():
     """
     Sets stabilizer tuning parameters.
-    Expects JSON: {'slew_rate': float, 'smoothing': float, 'silence_threshold': float}
+    Expects JSON: {'slew_rate': float, 'silence_threshold': float, 'averaging_window': float}
     """
     data = request.get_json()
     try:
         slew_rate = float(data['slew_rate'])
-        smoothing = float(data['smoothing'])
         silence_threshold = float(data['silence_threshold'])
+        averaging_window = float(data['averaging_window'])
         # Validate ranges
         slew_rate = max(0.5, min(10.0, slew_rate))
-        smoothing = max(0.05, min(0.5, smoothing))
         silence_threshold = max(-90.0, min(-20.0, silence_threshold))
-        mixer_manager.set_tuning(slew_rate, smoothing, silence_threshold)
+        averaging_window = max(1.0, min(30.0, averaging_window))
+        mixer_manager.set_tuning(slew_rate, silence_threshold, averaging_window)
         return jsonify({"message": "Stabilizer tuning updated.", "status": mixer_manager.get_status()})
     except (TypeError, KeyError, ValueError) as e:
         return jsonify({"error": f"Invalid tuning parameters: {e}"}), 400
@@ -101,7 +104,7 @@ def set_target_level():
     try:
         target_level_db = float(data['target_level_db'])
         mixer_manager.set_target_level(target_level_db)
-        return jsonify({"message": "Target level updated. Restart monitoring for changes to take effect.", "status": mixer_manager.get_status()})
+        return jsonify({"message": "Target level updated.", "status": mixer_manager.get_status()})
     except (TypeError, KeyError, ValueError) as e:
         return jsonify({"error": f"Invalid target level: {e}. Expected target_level_db as float."}), 400
 
@@ -174,7 +177,7 @@ def set_livestream_bus():
             pass # Keep as string if not a valid int
 
         mixer_manager.set_livestream_bus_number(bus_id)
-        return jsonify({"message": f"Livestream bus set to {bus_id}. Restart monitoring for changes to take effect.", "status": mixer_manager.get_status()}), 200
+        return jsonify({"message": f"Livestream bus set to {bus_id}.", "status": mixer_manager.get_status()}), 200
     except (TypeError, KeyError) as e:
         return jsonify({"error": f"Invalid bus ID: {e}. Expected 'bus_id' as string or int."}), 400
 
