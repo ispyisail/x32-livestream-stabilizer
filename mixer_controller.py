@@ -265,17 +265,31 @@ class MixerStateManager:
         # (prevents reacting to noise floor / silence)
         self.SIGNAL_THRESHOLD_DB = -50.0
 
-        # Slew rate: max dB the fader can move per adjustment cycle
-        # Prevents sudden jumps; lower = smoother. At 0.5s interval, 2.0 means max 4 dB/sec.
-        self.MAX_FADER_SLEW_DB = 0.5
+        # Slew rate: max dB the fader can move per adjustment cycle in stable mode.
+        # When output error > 5dB, slew is boosted 5x for faster correction.
+        self.MAX_FADER_SLEW_DB = 1.5
 
         self._smoothed_level_db = None
 
-        # Averaging window: collect meter readings over this many seconds
-        # and use their average for fader decisions. Prevents fast jumping.
-        self.AVERAGING_WINDOW_SECONDS = 10.0
-        self._meter_samples = deque(maxlen=3000)  # (timestamp, level_db), capped at ~5 min of data at 10Hz
-        self._last_avg_time = 0  # timestamp of last average computation
+        # Dual-EMA adaptive control (optimized via 69k-combination sweep):
+        # Fast EMA (~1s) tracks level changes quickly, slow EMA (~15s) for stability.
+        # When they diverge by more than SCENE_CHANGE_DB, a major change is detected
+        # (e.g., speaker switch, music start) and the fader responds quickly.
+        # When they agree, the fader stays rock-stable with a wide deadband.
+        self._fast_ema_db = None
+        self._slow_ema_db = None
+        self.FAST_EMA_SECONDS = 1.0        # time constant for fast tracking
+        self.SCENE_CHANGE_DB = 4.0         # dB divergence that triggers fast response
+        self.STABLE_DEADBAND_DB = 2.0      # ignore fader changes smaller than this when stable
+        self.SCENE_DEADBAND_DB = 0.5       # smaller deadband during scene changes
+        self.EMA_PULL_RATE = 0.2           # how fast slow EMA catches up during scene change
+
+        # Averaging window: controls the slow EMA time constant.
+        # Higher = more stable when levels are consistent, but scene changes
+        # are always detected and handled quickly regardless of this value.
+        self.AVERAGING_WINDOW_SECONDS = 15.0
+        self._meter_samples = deque(maxlen=3000)  # (timestamp, level_db) for UI display
+        self._last_avg_time = 0
 
         # Connection retry parameters
         self.MAX_RETRY_ATTEMPTS = 5
@@ -488,56 +502,109 @@ class MixerStateManager:
                     await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
                     continue
 
-                # Silence detection with debounce — require multiple consecutive
-                # below-threshold readings before freezing the fader.
-                # This prevents momentary dips from wiping the averaging buffer.
+                # --- Below-threshold: freeze fader, don't update EMAs ---
+                # Never feed silence/noise-floor into the EMAs — this prevents
+                # the fader from ramping up during gaps between speakers.
                 if self.current_level_db < self.SIGNAL_THRESHOLD_DB:
                     self._silence_count += 1
                     if self._silence_count >= self.SILENCE_DEBOUNCE and not self._in_silence:
                         logging.info(f"Signal below threshold for {self._silence_count} cycles ({self.current_level_db:.1f} dB), freezing fader at {self.current_fader_db:.1f} dB")
                         self._in_silence = True
                         self._stabilizer_state = "silence"
-                    if self._in_silence:
-                        await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
-                        continue
+                    # Always skip fader control when below threshold, even
+                    # before debounce confirms silence — just don't feed EMAs
+                    await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
+                    continue
                 else:
-                    self._silence_count = 0
-                    if self._in_silence:
-                        logging.info(f"Signal returned ({self.current_level_db:.1f} dB), resuming fader control")
+                    if self._silence_count > 0 or self._in_silence:
+                        # Signal returned — reset EMAs and jump fader to correct
+                        # position immediately (like cold start) so the first
+                        # reading after silence doesn't spike the output
+                        self._fast_ema_db = self.current_level_db
+                        self._slow_ema_db = self.current_level_db
+                        desired = self.TARGET_LEVEL_DB - self.current_level_db
+                        desired = max(self.MIN_FADER_DB, min(self.MAX_FADER_DB, desired))
+                        self._send_fader_osc(desired)
+                        logging.info(f"Signal returned ({self.current_level_db:.1f} dB), jumping fader to {desired:.1f} dB")
+                        self.current_fader_db = desired
                         self._in_silence = False
                         self._stabilizer_state = "monitoring"
+                    self._silence_count = 0
 
-                # Only compute average and adjust fader once per averaging window
-                now = time.time()
-                if now - self._last_avg_time < self.AVERAGING_WINDOW_SECONDS:
+                # --- Adaptive dual-EMA fader control ---
+                level_db = self.current_level_db
+                dt = self.ADJUSTMENT_INTERVAL_SECONDS
+                fast_alpha = 1.0 - math.exp(-dt / self.FAST_EMA_SECONDS)
+                slow_alpha = 1.0 - math.exp(-dt / max(self.AVERAGING_WINDOW_SECONDS, 0.5))
+
+                if self._fast_ema_db is None:
+                    # Cold start: seed EMAs and jump fader to correct position
+                    self._fast_ema_db = level_db
+                    self._slow_ema_db = level_db
+                    desired_fader_db = self.TARGET_LEVEL_DB - level_db
+                    desired_fader_db = max(self.MIN_FADER_DB, min(self.MAX_FADER_DB, desired_fader_db))
+                    self._send_fader_osc(desired_fader_db)
+                    self.current_fader_db = desired_fader_db
+                    logging.info(f"Cold start: level={level_db:.1f}, jumping fader to {desired_fader_db:.1f} dB")
                     await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
                     continue
 
-                # Trim samples older than the averaging window
+                self._fast_ema_db += fast_alpha * (level_db - self._fast_ema_db)
+                self._slow_ema_db += slow_alpha * (level_db - self._slow_ema_db)
+
+                # Detect scene change: fast EMA diverges from slow EMA
+                change_magnitude = abs(self._fast_ema_db - self._slow_ema_db)
+                is_scene_change = change_magnitude > self.SCENE_CHANGE_DB
+
+                if is_scene_change:
+                    # Big change detected — trust fast EMA, pull slow toward it
+                    control_level = self._fast_ema_db
+                    self._slow_ema_db += self.EMA_PULL_RATE * (self._fast_ema_db - self._slow_ema_db)
+                else:
+                    # Stable — use slow EMA for rock-solid control
+                    control_level = self._slow_ema_db
+
+                self._smoothed_level_db = control_level
+
+                # Trim meter samples for UI display
+                now = time.time()
                 cutoff = now - self.AVERAGING_WINDOW_SECONDS
                 while self._meter_samples and self._meter_samples[0][0] < cutoff:
                     self._meter_samples.popleft()
-                if not self._meter_samples:
-                    await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
-                    continue
-
-                # Average in linear amplitude space (not dB) for correct audio averaging
-                linear_values = [10.0 ** (s[1] / 20.0) for s in self._meter_samples]
-                avg_linear = sum(linear_values) / len(linear_values)
-                avg_level_db = 20.0 * math.log10(avg_linear) if avg_linear > 0 else -90.0
-                self._smoothed_level_db = avg_level_db
-                self._last_avg_time = now
 
                 # Feedforward: fader = target_output - input_level
-                desired_fader_db = self.TARGET_LEVEL_DB - avg_level_db
+                desired_fader_db = self.TARGET_LEVEL_DB - control_level
                 desired_fader_db = max(self.MIN_FADER_DB, min(self.MAX_FADER_DB, desired_fader_db))
 
-                logging.info(f"Monitor - Avg({len(self._meter_samples)} samples/{self.AVERAGING_WINDOW_SECONDS}s): {avg_level_db:.1f} dB, Raw: {self.current_level_db:.1f} dB, Target: {self.TARGET_LEVEL_DB:.1f} dB, Fader: {self.current_fader_db:.1f} -> {desired_fader_db:.1f} dB")
+                # Adaptive deadband and slew rate
+                fader_diff = desired_fader_db - self.current_fader_db
+                output_error = abs((level_db + self.current_fader_db) - self.TARGET_LEVEL_DB)
 
-                # Only move fader if change is significant (1 dB deadband)
-                if abs(desired_fader_db - self.current_fader_db) > 1.0:
-                    self._send_fader_osc(desired_fader_db)
-                    self.current_fader_db = desired_fader_db
+                if is_scene_change:
+                    deadband = self.SCENE_DEADBAND_DB
+                    max_slew = 20.0  # near-instant response
+                elif output_error > 5.0:
+                    # Moderate error in stable mode — allow faster correction
+                    deadband = self.STABLE_DEADBAND_DB
+                    max_slew = self.MAX_FADER_SLEW_DB * 5.0
+                else:
+                    deadband = self.STABLE_DEADBAND_DB
+                    max_slew = self.MAX_FADER_SLEW_DB
+
+                if abs(fader_diff) > deadband:
+                    # Apply slew rate limiting
+                    if abs(fader_diff) > max_slew:
+                        fader_diff = max_slew if fader_diff > 0 else -max_slew
+                    new_fader = self.current_fader_db + fader_diff
+                    new_fader = max(self.MIN_FADER_DB, min(self.MAX_FADER_DB, new_fader))
+                    self._send_fader_osc(new_fader)
+                    self.current_fader_db = new_fader
+                    logging.info(
+                        f"Fader {'[SCENE] ' if is_scene_change else ''}"
+                        f"Fast: {self._fast_ema_db:.1f}, Slow: {self._slow_ema_db:.1f}, "
+                        f"d: {change_magnitude:.1f}dB, "
+                        f"Fader: {self.current_fader_db:.1f} dB"
+                    )
 
             except Exception as e:
                 logging.error(f"Error in monitoring loop: {e}")
@@ -578,6 +645,8 @@ class MixerStateManager:
         self.mixer_connected = False
         self.current_level_db = None
         self._smoothed_level_db = None
+        self._fast_ema_db = None
+        self._slow_ema_db = None
         self._meter_samples.clear()
         self._last_avg_time = 0
         self._level_history.clear()
@@ -762,9 +831,7 @@ class MixerStateManager:
 
     def get_averaged_level(self):
         """
-        Returns the last computed average level and sample count.
-        The average is only recalculated once per averaging window in the
-        control loop, so this value stays stable between updates.
+        Returns the smoothed control level (from dual-EMA) and sample count.
         Returns (avg_db, sample_count) or (None, 0).
         """
         if self._smoothed_level_db is None:
