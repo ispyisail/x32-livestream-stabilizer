@@ -78,20 +78,28 @@ def stop_monitor():
 def set_tuning():
     """
     Sets stabilizer tuning parameters.
-    Expects JSON: {'slew_rate': float, 'silence_threshold': float, 'averaging_window': float}
+    Accepts any combination of tuning keys.
     """
     data = request.get_json()
     try:
-        slew_rate = float(data['slew_rate'])
-        silence_threshold = float(data['silence_threshold'])
-        averaging_window = float(data['averaging_window'])
-        # Validate ranges
-        slew_rate = max(0.5, min(10.0, slew_rate))
-        silence_threshold = max(-90.0, min(-20.0, silence_threshold))
-        averaging_window = max(1.0, min(30.0, averaging_window))
-        mixer_manager.set_tuning(slew_rate, silence_threshold, averaging_window)
+        tuning = {}
+        validators = {
+            'slew_rate':         (0.1, 10.0),
+            'silence_threshold': (-90.0, -20.0),
+            'averaging_window':  (1.0, 60.0),
+            'fast_ema':          (0.5, 20.0),
+            'scene_change_db':   (1.0, 20.0),
+            'deadband':          (0.5, 10.0),
+            'ema_pull_rate':     (0.01, 1.0),
+        }
+        for key, (lo, hi) in validators.items():
+            if key in data:
+                tuning[key] = max(lo, min(hi, float(data[key])))
+        if not tuning:
+            return jsonify({"error": "No valid tuning parameters provided."}), 400
+        mixer_manager.set_tuning(**tuning)
         return jsonify({"message": "Stabilizer tuning updated.", "status": mixer_manager.get_status()})
-    except (TypeError, KeyError, ValueError) as e:
+    except (TypeError, ValueError) as e:
         return jsonify({"error": f"Invalid tuning parameters: {e}"}), 400
 
 @app.route('/set_target_level', methods=['POST'])

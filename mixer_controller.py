@@ -531,15 +531,14 @@ class MixerStateManager:
                     continue
                 else:
                     if self._in_silence:
-                        # Signal returned after confirmed silence — reset EMAs
-                        # and jump fader to correct position immediately
+                        # Signal returned after confirmed silence — seed EMAs
+                        # with current level but DON'T jump the fader.
+                        # The fader was already near the right position before
+                        # silence, and the first reading back is often noisy.
+                        # Let the normal control loop adjust gradually.
                         self._fast_ema_db = self.current_level_db
                         self._slow_ema_db = self.current_level_db
-                        desired = self.TARGET_LEVEL_DB - self.current_level_db
-                        desired = max(self.MIN_FADER_DB, min(self.MAX_FADER_DB, desired))
-                        self._send_fader_osc(desired)
-                        logging.info(f"Signal returned ({self.current_level_db:.1f} dB), jumping fader to {desired:.1f} dB")
-                        self.current_fader_db = desired
+                        logging.info(f"Signal returned ({self.current_level_db:.1f} dB), resuming with fader at {self.current_fader_db:.1f} dB")
                         self._in_silence = False
                         self._stabilizer_state = "monitoring"
                     self._silence_count = 0
@@ -865,6 +864,10 @@ class MixerStateManager:
             "slew_rate": self.MAX_FADER_SLEW_DB,
             "silence_threshold": self.SIGNAL_THRESHOLD_DB,
             "averaging_window": self.AVERAGING_WINDOW_SECONDS,
+            "fast_ema": self.FAST_EMA_SECONDS,
+            "scene_change_db": self.SCENE_CHANGE_DB,
+            "deadband": self.STABLE_DEADBAND_DB,
+            "ema_pull_rate": self.EMA_PULL_RATE,
             "livestream_bus": self.LIVESTREAM_BUS_NUMBER,
             "mixer_ip": self.MIXER_IP,
             "suggested_livestream_output": self.suggested_livestream_output,
@@ -877,12 +880,23 @@ class MixerStateManager:
         self._save_config()
         logging.info(f"Auto-start {'enabled' if self.auto_start else 'disabled'}")
 
-    def set_tuning(self, slew_rate, silence_threshold, averaging_window):
-        self.MAX_FADER_SLEW_DB = slew_rate
-        self.SIGNAL_THRESHOLD_DB = silence_threshold
-        self.AVERAGING_WINDOW_SECONDS = averaging_window
+    def set_tuning(self, **kwargs):
+        if 'slew_rate' in kwargs:
+            self.MAX_FADER_SLEW_DB = kwargs['slew_rate']
+        if 'silence_threshold' in kwargs:
+            self.SIGNAL_THRESHOLD_DB = kwargs['silence_threshold']
+        if 'averaging_window' in kwargs:
+            self.AVERAGING_WINDOW_SECONDS = kwargs['averaging_window']
+        if 'fast_ema' in kwargs:
+            self.FAST_EMA_SECONDS = kwargs['fast_ema']
+        if 'scene_change_db' in kwargs:
+            self.SCENE_CHANGE_DB = kwargs['scene_change_db']
+        if 'deadband' in kwargs:
+            self.STABLE_DEADBAND_DB = kwargs['deadband']
+        if 'ema_pull_rate' in kwargs:
+            self.EMA_PULL_RATE = kwargs['ema_pull_rate']
         self._save_config()
-        logging.info(f"Stabilizer tuning updated: slew={slew_rate}, threshold={silence_threshold}, avg_window={averaging_window}s")
+        logging.info(f"Stabilizer tuning updated: {kwargs}")
 
     def set_target_level(self, target_level_db):
         self.TARGET_LEVEL_DB = target_level_db

@@ -239,21 +239,41 @@
                 <h2>Stabilizer Tuning</h2>
                 <div class="input-group">
                     <label for="new_slew">Slew Rate (dB/cycle):</label>
-                    <input type="number" step="0.5" min="0.5" max="10" id="new_slew" value="2.0">
-                    <p style="margin:2px 0;color:#666;font-size:0.85em;">Max fader movement per 0.5s. Lower = smoother.</p>
+                    <input type="number" step="0.1" min="0.1" max="10" id="new_slew">
+                    <p style="margin:2px 0;color:#666;font-size:0.85em;">Max fader movement per 0.5s cycle. Lower = smoother.</p>
                 </div>
                 <div class="input-group">
                     <label for="new_threshold">Silence Threshold (dB):</label>
-                    <input type="number" step="1" min="-90" max="-20" id="new_threshold" value="-60">
-                    <p style="margin:2px 0;color:#666;font-size:0.85em;">Below this, fader freezes (silence/between tracks).</p>
+                    <input type="number" step="1" min="-90" max="-20" id="new_threshold">
+                    <p style="margin:2px 0;color:#666;font-size:0.85em;">Below this, fader freezes (silence/between speakers).</p>
                 </div>
                 <div class="input-group">
-                    <label for="new_avg_window">Averaging Window (seconds):</label>
-                    <input type="number" step="1" min="1" max="30" id="new_avg_window" value="5">
-                    <p style="margin:2px 0;color:#666;font-size:0.85em;">Averages level over this many seconds. Higher = more stable, slower to react.</p>
+                    <label for="new_avg_window">Slow EMA (seconds):</label>
+                    <input type="number" step="1" min="1" max="60" id="new_avg_window">
+                    <p style="margin:2px 0;color:#666;font-size:0.85em;">Slow averaging time constant. Higher = more stable.</p>
+                </div>
+                <div class="input-group">
+                    <label for="new_fast_ema">Fast EMA (seconds):</label>
+                    <input type="number" step="0.5" min="0.5" max="20" id="new_fast_ema">
+                    <p style="margin:2px 0;color:#666;font-size:0.85em;">Fast tracking time constant. Lower = quicker scene detection.</p>
+                </div>
+                <div class="input-group">
+                    <label for="new_scene_db">Scene Threshold (dB):</label>
+                    <input type="number" step="0.5" min="1" max="20" id="new_scene_db">
+                    <p style="margin:2px 0;color:#666;font-size:0.85em;">EMA divergence to trigger fast response. Lower = more sensitive.</p>
+                </div>
+                <div class="input-group">
+                    <label for="new_deadband">Deadband (dB):</label>
+                    <input type="number" step="0.5" min="0.5" max="10" id="new_deadband">
+                    <p style="margin:2px 0;color:#666;font-size:0.85em;">Ignore fader changes smaller than this. Higher = less wobble.</p>
+                </div>
+                <div class="input-group">
+                    <label for="new_pull">EMA Pull Rate:</label>
+                    <input type="number" step="0.05" min="0.01" max="1" id="new_pull">
+                    <p style="margin:2px 0;color:#666;font-size:0.85em;">How fast slow EMA catches up during scene change.</p>
                 </div>
                 <button onclick="setStabilizerTuning()">Apply Tuning</button>
-                <p><strong>Current:</strong> Slew: <span id="slew_val">N/A</span> dB | Threshold: <span id="threshold_val">N/A</span> dB | Avg: <span id="avg_window_val">N/A</span>s</p>
+                <p><strong>Current:</strong> Slew: <span id="slew_val">-</span> | Threshold: <span id="threshold_val">-</span> | Slow: <span id="avg_window_val">-</span>s | Fast: <span id="fast_ema_val">-</span>s | Scene: <span id="scene_db_val">-</span> | Dead: <span id="deadband_val">-</span> | Pull: <span id="pull_val">-</span></p>
 
 
             </div>
@@ -337,6 +357,27 @@
                 document.getElementById('slew_val').textContent = data.slew_rate;
                 document.getElementById('threshold_val').textContent = data.silence_threshold;
                 document.getElementById('avg_window_val').textContent = data.averaging_window;
+                document.getElementById('fast_ema_val').textContent = data.fast_ema;
+                document.getElementById('scene_db_val').textContent = data.scene_change_db;
+                document.getElementById('deadband_val').textContent = data.deadband;
+                document.getElementById('pull_val').textContent = data.ema_pull_rate;
+
+                // Populate input fields with current values (only if user isn't editing)
+                const tuningFields = {
+                    'new_slew': data.slew_rate,
+                    'new_threshold': data.silence_threshold,
+                    'new_avg_window': data.averaging_window,
+                    'new_fast_ema': data.fast_ema,
+                    'new_scene_db': data.scene_change_db,
+                    'new_deadband': data.deadband,
+                    'new_pull': data.ema_pull_rate,
+                };
+                for (const [id, val] of Object.entries(tuningFields)) {
+                    const el = document.getElementById(id);
+                    if (el && document.activeElement !== el && !el.value) {
+                        el.value = val;
+                    }
+                }
 
                 if (!isNaN(currentLevel)) {
                     updateSignalMeter(currentLevel);
@@ -401,14 +442,20 @@
         }
 
         async function setStabilizerTuning() {
-            const slew = parseFloat(document.getElementById('new_slew').value);
-            const threshold = parseFloat(document.getElementById('new_threshold').value);
-            const avgWindow = parseFloat(document.getElementById('new_avg_window').value);
+            const body = {
+                slew_rate: parseFloat(document.getElementById('new_slew').value),
+                silence_threshold: parseFloat(document.getElementById('new_threshold').value),
+                averaging_window: parseFloat(document.getElementById('new_avg_window').value),
+                fast_ema: parseFloat(document.getElementById('new_fast_ema').value),
+                scene_change_db: parseFloat(document.getElementById('new_scene_db').value),
+                deadband: parseFloat(document.getElementById('new_deadband').value),
+                ema_pull_rate: parseFloat(document.getElementById('new_pull').value),
+            };
             try {
                 const response = await fetch('/set_tuning', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ slew_rate: slew, silence_threshold: threshold, averaging_window: avgWindow })
+                    body: JSON.stringify(body)
                 });
                 const data = await response.json();
                 if (response.ok) {
