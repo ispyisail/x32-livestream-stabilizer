@@ -273,6 +273,7 @@
                     <p style="margin:2px 0;color:#666;font-size:0.85em;">How fast slow EMA catches up during scene change.</p>
                 </div>
                 <button onclick="setStabilizerTuning()">Apply Tuning</button>
+                <button onclick="setTuningDefaults()" style="margin-left:8px;background:#666;">Set Defaults</button>
                 <p><strong>Current:</strong> Slew: <span id="slew_val">-</span> | Threshold: <span id="threshold_val">-</span> | Slow: <span id="avg_window_val">-</span>s | Fast: <span id="fast_ema_val">-</span>s | Scene: <span id="scene_db_val">-</span> | Dead: <span id="deadband_val">-</span> | Pull: <span id="pull_val">-</span></p>
 
 
@@ -439,6 +440,17 @@
                 console.error('Error setting target level:', error);
                 showMessage('Failed to set target level: ' + error.message, 'error');
             }
+        }
+
+        function setTuningDefaults() {
+            document.getElementById('new_slew').value = 0.5;
+            document.getElementById('new_threshold').value = -55;
+            document.getElementById('new_avg_window').value = 20;
+            document.getElementById('new_fast_ema').value = 4.0;
+            document.getElementById('new_scene_db').value = 5.0;
+            document.getElementById('new_deadband').value = 3.0;
+            document.getElementById('new_pull').value = 0.15;
+            setStabilizerTuning();
         }
 
         async function setStabilizerTuning() {
