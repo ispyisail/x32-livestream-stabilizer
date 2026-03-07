@@ -266,28 +266,29 @@ class MixerStateManager:
         self.SIGNAL_THRESHOLD_DB = -50.0
 
         # Slew rate: max dB the fader can move per adjustment cycle in stable mode.
-        # When output error > 5dB, slew is boosted 5x for faster correction.
-        self.MAX_FADER_SLEW_DB = 1.5
+        self.MAX_FADER_SLEW_DB = 0.5
 
         self._smoothed_level_db = None
 
-        # Dual-EMA adaptive control (optimized via 69k-combination sweep):
-        # Fast EMA (~1s) tracks level changes quickly, slow EMA (~15s) for stability.
+        # Dual-EMA adaptive control:
+        # Fast EMA tracks level changes, slow EMA for stability.
+        # Real X32 meter data is very noisy (10-15 dB swings between readings),
+        # so both EMAs need enough smoothing to ignore instantaneous peaks/dips.
         # When they diverge by more than SCENE_CHANGE_DB, a major change is detected
         # (e.g., speaker switch, music start) and the fader responds quickly.
         # When they agree, the fader stays rock-stable with a wide deadband.
         self._fast_ema_db = None
         self._slow_ema_db = None
-        self.FAST_EMA_SECONDS = 1.0        # time constant for fast tracking
-        self.SCENE_CHANGE_DB = 4.0         # dB divergence that triggers fast response
-        self.STABLE_DEADBAND_DB = 2.0      # ignore fader changes smaller than this when stable
-        self.SCENE_DEADBAND_DB = 0.5       # smaller deadband during scene changes
-        self.EMA_PULL_RATE = 0.2           # how fast slow EMA catches up during scene change
+        self.FAST_EMA_SECONDS = 4.0        # time constant for fast tracking (real meters are noisy)
+        self.SCENE_CHANGE_DB = 5.0         # dB divergence that triggers fast response
+        self.STABLE_DEADBAND_DB = 3.0      # ignore fader changes smaller than this when stable
+        self.SCENE_DEADBAND_DB = 1.0       # smaller deadband during scene changes
+        self.EMA_PULL_RATE = 0.15          # how fast slow EMA catches up during scene change
 
         # Averaging window: controls the slow EMA time constant.
         # Higher = more stable when levels are consistent, but scene changes
         # are always detected and handled quickly regardless of this value.
-        self.AVERAGING_WINDOW_SECONDS = 15.0
+        self.AVERAGING_WINDOW_SECONDS = 20.0
         self._meter_samples = deque(maxlen=3000)  # (timestamp, level_db) for UI display
         self._last_avg_time = 0
 
@@ -331,6 +332,10 @@ class MixerStateManager:
                 self.MAX_FADER_SLEW_DB = cfg.get("slew_rate", self.MAX_FADER_SLEW_DB)
                 self.SIGNAL_THRESHOLD_DB = cfg.get("silence_threshold", self.SIGNAL_THRESHOLD_DB)
                 self.AVERAGING_WINDOW_SECONDS = cfg.get("averaging_window", self.AVERAGING_WINDOW_SECONDS)
+                self.FAST_EMA_SECONDS = cfg.get("fast_ema", self.FAST_EMA_SECONDS)
+                self.SCENE_CHANGE_DB = cfg.get("scene_change_db", self.SCENE_CHANGE_DB)
+                self.STABLE_DEADBAND_DB = cfg.get("deadband", self.STABLE_DEADBAND_DB)
+                self.EMA_PULL_RATE = cfg.get("ema_pull_rate", self.EMA_PULL_RATE)
                 self.auto_start = cfg.get("auto_start", self.auto_start)
                 logging.info(f"Loaded settings from {self._config_file}")
         except Exception as e:
@@ -345,6 +350,10 @@ class MixerStateManager:
             "slew_rate": self.MAX_FADER_SLEW_DB,
             "silence_threshold": self.SIGNAL_THRESHOLD_DB,
             "averaging_window": self.AVERAGING_WINDOW_SECONDS,
+            "fast_ema": self.FAST_EMA_SECONDS,
+            "scene_change_db": self.SCENE_CHANGE_DB,
+            "deadband": self.STABLE_DEADBAND_DB,
+            "ema_pull_rate": self.EMA_PULL_RATE,
             "auto_start": self.auto_start,
         }
         try:
@@ -485,10 +494,15 @@ class MixerStateManager:
 
                 # Record history for graph
                 if self.current_level_db is not None:
+                    output_db = self.current_level_db + self.current_fader_db
                     self._level_history.append({
                         "t": time.time(),
                         "level": round(self.current_level_db, 2),
                         "fader": round(self.current_fader_db, 2),
+                        "output": round(output_db, 2),
+                        "fast_ema": round(self._fast_ema_db, 2) if self._fast_ema_db is not None else None,
+                        "slow_ema": round(self._slow_ema_db, 2) if self._slow_ema_db is not None else None,
+                        "state": self._stabilizer_state,
                     })
 
                 # Skip until real meter data has arrived
@@ -502,24 +516,23 @@ class MixerStateManager:
                     await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
                     continue
 
-                # --- Below-threshold: freeze fader, don't update EMAs ---
-                # Never feed silence/noise-floor into the EMAs — this prevents
-                # the fader from ramping up during gaps between speakers.
+                # --- Below-threshold handling ---
+                # Skip below-threshold readings from EMA updates entirely.
+                # Brief dips are normal (25-35% of readings), but feeding them
+                # into EMAs — even clamped — drags the average down and causes
+                # fader overcompensation. Only reset EMAs on confirmed silence exit.
                 if self.current_level_db < self.SIGNAL_THRESHOLD_DB:
                     self._silence_count += 1
                     if self._silence_count >= self.SILENCE_DEBOUNCE and not self._in_silence:
                         logging.info(f"Signal below threshold for {self._silence_count} cycles ({self.current_level_db:.1f} dB), freezing fader at {self.current_fader_db:.1f} dB")
                         self._in_silence = True
                         self._stabilizer_state = "silence"
-                    # Always skip fader control when below threshold, even
-                    # before debounce confirms silence — just don't feed EMAs
                     await asyncio.sleep(self.ADJUSTMENT_INTERVAL_SECONDS)
                     continue
                 else:
-                    if self._silence_count > 0 or self._in_silence:
-                        # Signal returned — reset EMAs and jump fader to correct
-                        # position immediately (like cold start) so the first
-                        # reading after silence doesn't spike the output
+                    if self._in_silence:
+                        # Signal returned after confirmed silence — reset EMAs
+                        # and jump fader to correct position immediately
                         self._fast_ema_db = self.current_level_db
                         self._slow_ema_db = self.current_level_db
                         desired = self.TARGET_LEVEL_DB - self.current_level_db
@@ -582,11 +595,11 @@ class MixerStateManager:
 
                 if is_scene_change:
                     deadband = self.SCENE_DEADBAND_DB
-                    max_slew = 20.0  # near-instant response
-                elif output_error > 5.0:
-                    # Moderate error in stable mode — allow faster correction
+                    max_slew = 6.0  # fast but not instant
+                elif output_error > 8.0:
+                    # Large sustained error — allow moderate correction
                     deadband = self.STABLE_DEADBAND_DB
-                    max_slew = self.MAX_FADER_SLEW_DB * 5.0
+                    max_slew = self.MAX_FADER_SLEW_DB * 3.0
                 else:
                     deadband = self.STABLE_DEADBAND_DB
                     max_slew = self.MAX_FADER_SLEW_DB

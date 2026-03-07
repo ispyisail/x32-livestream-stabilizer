@@ -220,6 +220,35 @@ def set_fader():
         return jsonify({"error": f"Invalid fader value: {e}"}), 400
 
 
+@app.route('/debug')
+def debug_page():
+    """Live algorithm monitoring dashboard."""
+    return render_template('debug.html')
+
+@app.route('/debug_data')
+def debug_data():
+    """Returns recent algorithm state for the debug monitor."""
+    history = list(mixer_manager._level_history)
+    return jsonify({
+        "history": history[-200:],
+        "state": mixer_manager._stabilizer_state,
+        "fast_ema": round(mixer_manager._fast_ema_db, 2) if mixer_manager._fast_ema_db is not None else None,
+        "slow_ema": round(mixer_manager._slow_ema_db, 2) if mixer_manager._slow_ema_db is not None else None,
+        "level": round(mixer_manager.current_level_db, 2) if mixer_manager.current_level_db is not None else None,
+        "fader": round(mixer_manager.current_fader_db, 2),
+        "target": mixer_manager.TARGET_LEVEL_DB,
+        "params": {
+            "fast_ema_s": mixer_manager.FAST_EMA_SECONDS,
+            "slow_ema_s": mixer_manager.AVERAGING_WINDOW_SECONDS,
+            "scene_db": mixer_manager.SCENE_CHANGE_DB,
+            "deadband": mixer_manager.STABLE_DEADBAND_DB,
+            "slew": mixer_manager.MAX_FADER_SLEW_DB,
+            "pull": mixer_manager.EMA_PULL_RATE,
+            "threshold": mixer_manager.SIGNAL_THRESHOLD_DB,
+        }
+    })
+
+
 if __name__ == '__main__':
     if mixer_manager.auto_start:
         logging.info("Auto-start enabled — starting monitoring on launch")

@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>X32 Stabilizer - Algorithm Monitor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #1a1a2e; color: #e0e0e0; font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; }
+
+        .header { background: #16213e; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #0f3460; }
+        .header h1 { font-size: 16px; color: #e94560; }
+        .header .status { font-size: 13px; }
+        .header .status .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+        .dot-green { background: #00e676; box-shadow: 0 0 6px #00e676; }
+        .dot-yellow { background: #ffd600; box-shadow: 0 0 6px #ffd600; }
+        .dot-red { background: #ff1744; box-shadow: 0 0 6px #ff1744; }
+
+        .grid { display: grid; grid-template-columns: 300px 1fr; grid-template-rows: auto 1fr; gap: 8px; padding: 8px; height: calc(100vh - 50px); }
+
+        /* Left panel: live values */
+        .panel { background: #16213e; border: 1px solid #0f3460; border-radius: 6px; padding: 12px; }
+        .panel h2 { font-size: 13px; color: #e94560; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px; }
+
+        .metric { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #0f346033; }
+        .metric .label { color: #8899aa; }
+        .metric .value { font-weight: bold; text-align: right; }
+        .metric .value.scene { color: #e94560; }
+        .metric .value.silence { color: #666; }
+        .metric .value.stable { color: #00e676; }
+
+        .ema-bar { margin: 8px 0; }
+        .ema-bar .bar-label { font-size: 11px; color: #8899aa; margin-bottom: 2px; }
+        .bar-container { background: #0a0a1a; height: 20px; border-radius: 3px; position: relative; overflow: hidden; }
+        .bar-fill { height: 100%; position: absolute; top: 0; transition: left 0.3s, width 0.3s; border-radius: 3px; }
+        .bar-fast { background: #e94560aa; }
+        .bar-slow { background: #0f3460; border: 1px solid #1a6dd4; }
+        .bar-target { position: absolute; top: 0; height: 100%; width: 2px; background: #ffd600; z-index: 5; }
+        .bar-level { background: #00e67688; }
+
+        .params-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+        .param { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
+        .param .label { color: #667; }
+
+        /* Charts */
+        .chart-area { grid-column: 2; grid-row: 1 / 3; display: flex; flex-direction: column; gap: 8px; }
+        canvas { background: #0a0a1a; border: 1px solid #0f3460; border-radius: 6px; width: 100%; }
+
+        /* Log */
+        .log-panel { grid-column: 1; overflow: hidden; display: flex; flex-direction: column; }
+        .log-entries { flex: 1; overflow-y: auto; font-size: 11px; }
+        .log-entry { padding: 2px 0; border-bottom: 1px solid #0f346022; white-space: nowrap; }
+        .log-entry.scene { color: #e94560; font-weight: bold; }
+        .log-entry.silence { color: #555; }
+        .log-entry.move { color: #ffd600; }
+
+        .divergence-meter { margin: 8px 0; }
+        .div-bar-bg { background: #0a0a1a; height: 14px; border-radius: 3px; position: relative; }
+        .div-bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+        .div-threshold { position: absolute; top: 0; height: 100%; width: 2px; background: #e94560; z-index: 2; }
+        .div-labels { display: flex; justify-content: space-between; font-size: 10px; color: #556; margin-top: 1px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Algorithm Monitor</h1>
+        <div class="status">
+            <span class="dot dot-green" id="statusDot"></span>
+            <span id="statusText">connecting...</span>
+            &nbsp; | &nbsp;
+            <a href="/" style="color:#1a6dd4;">Dashboard</a>
+        </div>
+    </div>
+
+    <div class="grid">
+        <!-- Live values panel -->
+        <div class="panel">
+            <h2>Live State</h2>
+            <div class="metric"><span class="label">Input Level</span><span class="value" id="vLevel">--</span></div>
+            <div class="metric"><span class="label">Fader</span><span class="value" id="vFader">--</span></div>
+            <div class="metric"><span class="label">Output</span><span class="value" id="vOutput">--</span></div>
+            <div class="metric"><span class="label">Target</span><span class="value" id="vTarget">--</span></div>
+            <div class="metric"><span class="label">Output Error</span><span class="value" id="vError">--</span></div>
+            <div class="metric"><span class="label">Fast EMA</span><span class="value" id="vFast">--</span></div>
+            <div class="metric"><span class="label">Slow EMA</span><span class="value" id="vSlow">--</span></div>
+            <div class="metric"><span class="label">Divergence</span><span class="value" id="vDiv">--</span></div>
+            <div class="metric"><span class="label">State</span><span class="value" id="vState">--</span></div>
+
+            <div class="divergence-meter">
+                <div class="bar-label">EMA Divergence vs Scene Threshold</div>
+                <div class="div-bar-bg">
+                    <div class="div-bar-fill" id="divFill" style="width:0%; background:#00e676;"></div>
+                    <div class="div-threshold" id="divThresh" style="left:40%;"></div>
+                </div>
+                <div class="div-labels"><span>0 dB</span><span id="divMax">10 dB</span></div>
+            </div>
+
+            <h2 style="margin-top:12px;">Parameters</h2>
+            <div class="params-grid">
+                <div class="param"><span class="label">Fast EMA</span><span id="pFast">--</span></div>
+                <div class="param"><span class="label">Slow EMA</span><span id="pSlow">--</span></div>
+                <div class="param"><span class="label">Scene</span><span id="pScene">--</span></div>
+                <div class="param"><span class="label">Deadband</span><span id="pDead">--</span></div>
+                <div class="param"><span class="label">Slew</span><span id="pSlew">--</span></div>
+                <div class="param"><span class="label">Pull</span><span id="pPull">--</span></div>
+                <div class="param"><span class="label">Threshold</span><span id="pThresh">--</span></div>
+            </div>
+        </div>
+
+        <!-- Chart area -->
+        <div class="chart-area">
+            <canvas id="levelChart" height="200"></canvas>
+            <canvas id="faderChart" height="140"></canvas>
+            <canvas id="divergeChart" height="100"></canvas>
+        </div>
+
+        <!-- Log panel -->
+        <div class="panel log-panel">
+            <h2>Event Log</h2>
+            <div class="log-entries" id="logEntries"></div>
+        </div>
+    </div>
+
+    <script>
+        const POLL_MS = 500;
+        const CHART_SECONDS = 60;
+        let prevState = null;
+        let prevFader = null;
+        let logLines = [];
+
+        function $(id) { return document.getElementById(id); }
+
+        function dbText(v) { return v !== null && v !== undefined ? v.toFixed(1) + ' dB' : '--'; }
+
+        function addLog(msg, cls) {
+            const now = new Date();
+            const ts = now.toLocaleTimeString('en-GB', {hour12:false}) + '.' + String(now.getMilliseconds()).padStart(3,'0').slice(0,1);
+            logLines.push({ts, msg, cls});
+            if (logLines.length > 200) logLines.shift();
+            const el = $('logEntries');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry' + (cls ? ' ' + cls : '');
+            entry.textContent = ts + ' ' + msg;
+            el.appendChild(entry);
+            if (el.children.length > 200) el.removeChild(el.firstChild);
+            el.scrollTop = el.scrollHeight;
+        }
+
+        // --- Charts ---
+        function drawChart(canvasId, datasets, yMin, yMax, title) {
+            const canvas = $(canvasId);
+            const ctx = canvas.getContext('2d');
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
+            const W = rect.width, H = rect.height;
+            const pad = {l: 55, r: 10, t: 22, b: 20};
+            const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+
+            ctx.clearRect(0, 0, W, H);
+
+            // Title
+            ctx.fillStyle = '#8899aa';
+            ctx.font = '11px Consolas, monospace';
+            ctx.fillText(title, pad.l, 14);
+
+            // Grid
+            ctx.strokeStyle = '#1a2a3a';
+            ctx.lineWidth = 1;
+            const ySteps = 5;
+            for (let i = 0; i <= ySteps; i++) {
+                const y = pad.t + (ch / ySteps) * i;
+                ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+                const val = yMax - (yMax - yMin) * (i / ySteps);
+                ctx.fillStyle = '#556';
+                ctx.fillText(val.toFixed(0), 5, y + 4);
+            }
+
+            // Data lines
+            if (datasets.length === 0 || datasets[0].data.length === 0) return;
+            const times = datasets[0].data.map(d => d.t);
+            const tMax = times[times.length - 1];
+            const tMin = tMax - CHART_SECONDS;
+
+            for (const ds of datasets) {
+                ctx.strokeStyle = ds.color;
+                ctx.lineWidth = ds.width || 1.5;
+                ctx.globalAlpha = ds.alpha || 1;
+                ctx.beginPath();
+                let started = false;
+                for (const pt of ds.data) {
+                    if (pt.t < tMin) continue;
+                    const x = pad.l + ((pt.t - tMin) / CHART_SECONDS) * cw;
+                    const y = pad.t + ((yMax - pt.v) / (yMax - yMin)) * ch;
+                    if (!started) { ctx.moveTo(x, y); started = true; }
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+                ctx.globalAlpha = 1;
+
+                // Dashed reference lines
+                if (ds.ref !== undefined) {
+                    ctx.save();
+                    ctx.setLineDash([4, 4]);
+                    ctx.strokeStyle = ds.refColor || ds.color;
+                    ctx.lineWidth = 1;
+                    ctx.globalAlpha = 0.6;
+                    const ry = pad.t + ((yMax - ds.ref) / (yMax - yMin)) * ch;
+                    ctx.beginPath(); ctx.moveTo(pad.l, ry); ctx.lineTo(W - pad.r, ry); ctx.stroke();
+                    ctx.restore();
+                }
+            }
+        }
+
+        async function poll() {
+            try {
+                const resp = await fetch('/debug_data');
+                const d = await resp.json();
+
+                // Status
+                const dot = $('statusDot');
+                const stateMap = {monitoring:'dot-green', silence:'dot-yellow', stopped:'dot-red', error:'dot-red', connecting:'dot-yellow', reconnecting:'dot-yellow'};
+                dot.className = 'dot ' + (stateMap[d.state] || 'dot-yellow');
+                $('statusText').textContent = d.state;
+
+                // Live values
+                const output = d.level !== null && d.fader !== null ? d.level + d.fader : null;
+                const error = output !== null ? Math.abs(output - d.target) : null;
+                const div = d.fast_ema !== null && d.slow_ema !== null ? Math.abs(d.fast_ema - d.slow_ema) : null;
+
+                $('vLevel').textContent = dbText(d.level);
+                $('vFader').textContent = dbText(d.fader);
+                $('vOutput').textContent = dbText(output);
+                $('vTarget').textContent = dbText(d.target);
+                $('vError').textContent = error !== null ? error.toFixed(1) + ' dB' : '--';
+                $('vFast').textContent = dbText(d.fast_ema);
+                $('vSlow').textContent = dbText(d.slow_ema);
+                $('vDiv').textContent = div !== null ? div.toFixed(1) + ' dB' : '--';
+
+                const stateEl = $('vState');
+                stateEl.textContent = d.state;
+                stateEl.className = 'value ' + (d.state === 'silence' ? 'silence' : d.state === 'monitoring' ? 'stable' : '');
+
+                // Divergence bar
+                if (div !== null && d.params) {
+                    const maxDiv = 10;
+                    const pct = Math.min(div / maxDiv * 100, 100);
+                    const fill = $('divFill');
+                    fill.style.width = pct + '%';
+                    fill.style.background = div > d.params.scene_db ? '#e94560' : '#00e676';
+                    $('divThresh').style.left = (d.params.scene_db / maxDiv * 100) + '%';
+                }
+
+                // Params
+                if (d.params) {
+                    $('pFast').textContent = d.params.fast_ema_s + 's';
+                    $('pSlow').textContent = d.params.slow_ema_s + 's';
+                    $('pScene').textContent = d.params.scene_db + ' dB';
+                    $('pDead').textContent = d.params.deadband + ' dB';
+                    $('pSlew').textContent = d.params.slew + ' dB';
+                    $('pPull').textContent = d.params.pull;
+                    $('pThresh').textContent = d.params.threshold + ' dB';
+                }
+
+                // Event log
+                if (d.state !== prevState) {
+                    const isScene = div !== null && d.params && div > d.params.scene_db;
+                    if (d.state === 'silence') addLog('Entered silence', 'silence');
+                    else if (prevState === 'silence') addLog('Signal returned', 'scene');
+                    else if (isScene) addLog(`Scene change detected (div=${div.toFixed(1)} dB)`, 'scene');
+                    prevState = d.state;
+                }
+                if (d.fader !== null && prevFader !== null) {
+                    const faderMove = Math.abs(d.fader - prevFader);
+                    if (faderMove > 0.3) {
+                        addLog(`Fader ${d.fader > prevFader ? '+' : ''}${(d.fader - prevFader).toFixed(1)} dB -> ${d.fader.toFixed(1)} dB (err=${error !== null ? error.toFixed(1) : '?'})`, faderMove > 2 ? 'scene' : 'move');
+                    }
+                }
+                prevFader = d.fader;
+
+                // --- Draw charts ---
+                const hist = d.history || [];
+
+                // Level chart: input, output, fast EMA, slow EMA, target
+                const levelDS = [];
+                levelDS.push({color:'#00e67688', width:1, data: hist.map(h => ({t:h.t, v:h.level})), alpha:0.5});
+                levelDS.push({color:'#e94560', width:2, data: hist.filter(h=>h.fast_ema!==null).map(h => ({t:h.t, v:h.fast_ema}))});
+                levelDS.push({color:'#1a6dd4', width:2, data: hist.filter(h=>h.slow_ema!==null).map(h => ({t:h.t, v:h.slow_ema}))});
+                levelDS.push({color:'#ffd600', width:1.5, data: hist.map(h => ({t:h.t, v:h.output})), ref: d.target, refColor:'#ffd600'});
+                drawChart('levelChart', levelDS, -80, -10, 'Levels: green=input  red=fast EMA  blue=slow EMA  yellow=output  (dashed=target)');
+
+                // Fader chart
+                const faderDS = [{color:'#e94560', width:2, data: hist.map(h => ({t:h.t, v:h.fader})), ref:0, refColor:'#333'}];
+                drawChart('faderChart', faderDS, -30, 20, 'Fader Position (dB)');
+
+                // Divergence chart
+                const divDS = [{color:'#ff6f00', width:1.5, data: hist.filter(h=>h.fast_ema!==null&&h.slow_ema!==null).map(h => ({t:h.t, v:Math.abs(h.fast_ema-h.slow_ema)}))}];
+                if (d.params) divDS[0].ref = d.params.scene_db;
+                divDS[0].refColor = '#e94560';
+                drawChart('divergeChart', divDS, 0, 15, 'EMA Divergence (dB) - dashed = scene threshold');
+
+            } catch(e) {
+                $('statusDot').className = 'dot dot-red';
+                $('statusText').textContent = 'fetch error';
+            }
+        }
+
+        setInterval(poll, POLL_MS);
+        poll();
+    </script>
+</body>
+</html>
